@@ -27,7 +27,24 @@ export class World {
     this.buildingTex = this.createModernPanelTexture('#e2e8f0', '#94a3b8', '#38bdf8');
     this.roadTex = this.createRoadTexture('#1e293b', '#334155');
     this.boxTex = this.createGridTexture('#0284c7', '#7dd3fc');
+    this.initSharedMaterials();
   }
+  
+  initSharedMaterials() {
+    this.sharedMats = {
+      wall: new THREE.MeshStandardMaterial({ map: this.buildingTex, roughness: 0.55 }),
+      floor: new THREE.MeshStandardMaterial({ map: this.floorSlabTex, roughness: 0.7 }),
+      stair: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5 }),
+      rail: new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4 }),
+      glassRail: new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.42,
+        roughness: 0.2
+      })
+    };
+  }
+
 
   createGridTexture(bg, line) {
     const c = document.createElement('canvas');
@@ -129,10 +146,11 @@ export class World {
     return this.buildCityArena(floor);
   }
 
-  addSolidBox(cx, cy, cz, w, h, d, mat, extraData = {}) {
+  // addSolidBox に castShadow オプションを追加（デフォルトは大きな構造物のみ影を落とす）
+  addSolidBox(cx, cy, cz, w, h, d, mat, extraData = {}, castShadow = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     mesh.position.set(cx, cy, cz);
-    mesh.castShadow = true;
+    mesh.castShadow = castShadow;
     mesh.receiveShadow = true;
     mesh.userData = {
       halfX: w / 2,
@@ -147,90 +165,78 @@ export class World {
     return mesh;
   }
 
-  // ---- 折り返し階段（踊り場付き・ワートリビル仕様）を生成 ----
-  // baseY から baseY + floorH まで、前半フライト → 中2階踊り場 → 後半フライトで折り返して登る
+  // 折り返し階段の軽量化（10段→6段、踏み板の影生成オフ）
   buildSwitchbackStaircase(cx, cz, baseY, floorH, stairMat, railMat) {
-    const totalW = 6.2;      // 階段ユニット全体の横幅（往路3.0 + 復路3.0 + 中央仕切り0.2）
-    const flightW = 2.8;     // 片側階段の有効幅（すれ違い・戦闘できる広さ）
-    const totalLen = 11.0;   // 階段ユニット全体の奥行き
-    const landingD = 3.0;    // 踊り場の奥行き
-    const runLen = totalLen - landingD; // 傾斜部分の長さ (8.0m)
+    const totalW = 6.2;
+    const flightW = 2.8;
+    const totalLen = 11.0;
+    const landingD = 3.0;
+    const runLen = totalLen - landingD;
     const midY = baseY + floorH * 0.5;
 
-    // 1. 中2階踊り場（北側奥）
     const landingZ = cz - totalLen / 2 + landingD / 2;
-    this.addSolidBox(cx, midY - 0.2, landingZ, totalW, 0.4, landingD, stairMat);
-    // 踊り場の奥壁（転落防止）
-    this.addSolidBox(cx, midY + 0.6, cz - totalLen / 2 - 0.15, totalW, 1.4, 0.3, railMat);
+    this.addSolidBox(cx, midY - 0.2, landingZ, totalW, 0.4, landingD, stairMat, {}, false);
+    this.addSolidBox(cx, midY + 0.6, cz - totalLen / 2 - 0.15, totalW, 1.4, 0.3, railMat, {}, false);
 
-    // 2. 前半階段（左側レーン：手前南側から奥北側の踊り場へ登る）
+    // 前半階段（6段：1段約0.54mなので既存の段差登坂判定でスムーズに登れる）
     const leftX = cx - totalW / 2 + flightW / 2;
-    const steps1 = 10;
+    const steps1 = 6;
     const stepH1 = (floorH * 0.5) / steps1;
     const stepD1 = runLen / steps1;
-    const startZ1 = cz + totalLen / 2; // 南端
+    const startZ1 = cz + totalLen / 2;
 
     for (let i = 0; i < steps1; i++) {
       const topY = baseY + stepH1 * (i + 1);
       const sz = startZ1 - stepD1 * (i + 0.5);
-      // 薄い踏み板スラブとして配置（下をくぐれるリアルな階段構造）
-      this.addSolidBox(leftX, topY - 0.18, sz, flightW, 0.36, stepD1 + 0.22, stairMat);
+      this.addSolidBox(leftX, topY - 0.18, sz, flightW, 0.36, stepD1 + 0.25, stairMat, {}, false);
     }
 
-    // 3. 後半階段（右側レーン：奥北側の踊り場から手前南側の上階フロアへ登る）
+    // 後半階段（6段）
     const rightX = cx + totalW / 2 - flightW / 2;
-    const steps2 = 10;
+    const steps2 = 6;
     const stepH2 = (floorH * 0.5) / steps2;
     const stepD2 = runLen / steps2;
-    const startZ2 = cz - totalLen / 2 + landingD; // 踊り場端
+    const startZ2 = cz - totalLen / 2 + landingD;
 
     for (let i = 0; i < steps2; i++) {
       const topY = midY + stepH2 * (i + 1);
       const sz = startZ2 + stepD2 * (i + 0.5);
-      this.addSolidBox(rightX, topY - 0.18, sz, flightW, 0.36, stepD2 + 0.22, stairMat);
+      this.addSolidBox(rightX, topY - 0.18, sz, flightW, 0.36, stepD2 + 0.25, stairMat, {}, false);
     }
 
-    // 4. 中央の腰壁（手すり：撃ち合いの遮蔽物になる）
-    this.addSolidBox(cx, baseY + floorH * 0.55, cz + 0.8, 0.28, floorH * 0.85, runLen, railMat);
+    this.addSolidBox(cx, baseY + floorH * 0.55, cz + 0.8, 0.28, floorH * 0.85, runLen, railMat, {}, false);
   }
 
-  // ---- 中央吹き抜けの商業モール風「緩やかエスカレーター・スロープ」 ----
   buildMallEscalator(cx, cz, baseY, floorH, dirZ, stairMat, glassRailMat) {
     const width = 3.2;
     const length = 11.5;
-    const steps = 16;
+    const steps = 12;
     const stepH = floorH / steps;
     const stepD = length / steps;
 
     for (let i = 0; i < steps; i++) {
       const topY = baseY + stepH * (i + 1);
       const offsetZ = (-length / 2 + stepD * (i + 0.5)) * dirZ;
-      this.addSolidBox(cx, topY - 0.18, cz + offsetZ, width, 0.36, stepD + 0.25, stairMat);
+      this.addSolidBox(cx, topY - 0.18, cz + offsetZ, width, 0.36, stepD + 0.28, stairMat, {}, false);
     }
 
-    // 左右にガラス手すり（射撃を通す／遮蔽になる段差手すり）
     [-1, 1].forEach((side) => {
       const rx = cx + side * (width / 2 + 0.15);
-      for (let i = 0; i < 4; i++) {
-        const segY = baseY + floorH * ((i + 0.5) / 4) + 0.55;
-        const segZ = cz + ((-length / 2) + (length * (i + 0.5)) / 4) * dirZ;
-        this.addSolidBox(rx, segY, segZ, 0.22, 1.0, length / 4, glassRailMat);
+      for (let i = 0; i < 3; i++) {
+        const segY = baseY + floorH * ((i + 0.5) / 3) + 0.55;
+        const segZ = cz + ((-length / 2) + (length * (i + 0.5)) / 3) * dirZ;
+        this.addSolidBox(rx, segY, segZ, 0.22, 1.0, length / 3, glassRailMat, {}, false);
       }
     });
   }
 
   // ---- ワールドトリガー風 大型商業・オフィスビル（高天井 6.5m ＆ 折り返し階段＆吹き抜け） ----
   buildEnterableBuilding(cx, cz, floors = 2, size = 24, isCentralMall = false) {
-    const wallMat = new THREE.MeshStandardMaterial({ map: this.buildingTex, roughness: 0.55 });
-    const floorMat = new THREE.MeshStandardMaterial({ map: this.floorSlabTex, roughness: 0.7 });
-    const stairMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5 });
-    const railMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4 });
-    const glassRailMat = new THREE.MeshStandardMaterial({
-      color: 0x38bdf8,
-      transparent: true,
-      opacity: 0.42,
-      roughness: 0.2
-    });
+    const wallMat = this.sharedMats.wall;
+    const floorMat = this.sharedMats.floor;
+    const stairMat = this.sharedMats.stair;
+    const railMat = this.sharedMats.rail;
+    const glassRailMat = this.sharedMats.glassRail;
 
     const floorH = 6.5;     // 天井高 6.5m（グラスホッパー・空中戦が余裕でできる高さ）
     const slabThick = 0.5;
