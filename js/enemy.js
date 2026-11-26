@@ -2,48 +2,44 @@ import * as THREE from 'three';
 import { EXP_PER_KILL, expNeed, pointsFor, EXS_GAUGE_MAX } from './data.js';
 import { state, SAVE, PLAYER, saveGame } from './save.js';
 
-function getBossDefinition(floor) {
-  if (floor === 5) {
-    return {
-      type: 'rabbit_proto',
-      name: '5.5F【新型トリオン兵】ラービット・プロト',
-      color: 0xb15cff, scale: 2.1, hpMult: 1.25, atkMult: 1.15
-    };
+// ランク戦対戦相手（ボーダー隊員AIアーキタイプ）
+const RIVAL_ARCHETYPES = [
+  {
+    role: 'attacker',
+    title: '攻撃手（アタッカー）',
+    names: ['C級攻撃手・荒船訓練生', 'B級攻撃手・村上鋼モデル', 'B級攻撃手・生駒達人モデル', 'A級1位・太刀川慶モデル'],
+    color: 0x48bb78,
+    visorColor: 0x00ffff,
+    trionMult: 1.0,
+    powerMult: 1.15,
+    speed: 0.155,
+    preferredDist: 3.4,
+    aiReaction: 0.72
+  },
+  {
+    role: 'shooter',
+    title: '射手（シューター）',
+    names: ['C級射手・訓練生', 'B級射手・那須玲モデル', 'B級射手・出水公平モデル', 'A級級射手・二宮匡貴モデル'],
+    color: 0x38bdf8,
+    visorColor: 0xffd36a,
+    trionMult: 1.25,
+    powerMult: 1.05,
+    speed: 0.135,
+    preferredDist: 14.0,
+    aiReaction: 0.78
+  },
+  {
+    role: 'allrounder',
+    title: '万能手（オールラウンダー）',
+    names: ['B級万能手・三雲修モデル', 'B級万能手・諏訪洸太郎モデル', 'A級万能手・嵐山准モデル', 'A級万能手・木崎レイジモデル'],
+    color: 0xa855f7,
+    visorColor: 0x00ffff,
+    trionMult: 1.15,
+    powerMult: 1.10,
+    speed: 0.145,
+    preferredDist: 8.5,
+    aiReaction: 0.82
   }
-  if (floor === 10) {
-    return {
-      type: 'vander_heavy',
-      name: '10.5F【重砲撃型】メガ・バンダー',
-      color: 0xff4500, scale: 2.4, hpMult: 1.5, atkMult: 1.35
-    };
-  }
-  if (floor === 15) {
-    return {
-      type: 'neighbor_swordsman',
-      name: '15.5F【人型ネイバー】黒トリガー使い',
-      color: 0x00ffff, scale: 1.35, hpMult: 2.0, atkMult: 1.7
-    };
-  }
-
-  const isMajor = (floor >= 10 && floor % 10 === 0);
-  const title = isMajor
-    ? `${floor}.5F【黒トリガー】人型ネイバー指揮官`
-    : `${floor}.5F【装甲適応型】特級ラービット`;
-
-  return {
-    type: isMajor ? 'neighbor_commander' : 'rabbit_adaptive',
-    name: title,
-    color: isMajor ? 0xff1144 : 0x805ad5,
-    scale: isMajor ? 1.5 : 2.2,
-    hpMult: (isMajor ? 2.2 : 1.2) + floor * 0.02,
-    atkMult: (isMajor ? 1.6 : 1.1) + floor * 0.015
-  };
-}
-
-const RARE_TRION_SOLDIERS = [
-  { name: '⚠️【特級捕獲型】ラービット',   color: 0xff8c00, scale: 2.3, hpMult: 3.0, atkMult: 1.6, speed: 0.085, range: 3.0, ranged: false, buffType: 'trion' },
-  { name: '⚠️【高機動型】ステルスモール', color: 0x00ffff, scale: 1.6, hpMult: 2.2, atkMult: 2.4, speed: 0.145, range: 2.4, ranged: false, buffType: 'power' },
-  { name: '⚠️【砲撃型】重装バンダー',     color: 0xb15cff, scale: 1.8, hpMult: 2.5, atkMult: 1.7, speed: 0.075, range: 3.2, ranged: true,  buffType: 'power' }
 ];
 
 export class EnemyManager {
@@ -59,10 +55,7 @@ export class EnemyManager {
     this.hazardZones = [];
     this.activeBoss = null;
     this.enemyBeams = [];
-    this.bossRoomCorners = [
-      { x: -18, z: -18 }, { x: 18, z: -18 },
-      { x: -18, z: 18 },  { x: 18, z: 18 }
-    ];
+    this.fxMeshes = [];
   }
 
   clearAll() {
@@ -81,237 +74,236 @@ export class EnemyManager {
 
     for (const b of this.enemyBeams) this.scene.remove(b.group);
     this.enemyBeams = [];
+
+    for (const f of this.fxMeshes) this.scene.remove(f.mesh);
+    this.fxMeshes = [];
   }
 
-  spawnForFloor(floor, spawnPoints, bossPoint, isBossFloor = false, bossRoomCorners = null) {
+  // 1vs1 市街地ランク模擬戦の対戦相手を生成
+  spawnForFloor(floor, rivalStart) {
     this.clearAll();
-    if (bossRoomCorners) this.bossRoomCorners = bossRoomCorners;
+    if (floor === 0 || !rivalStart) return;
 
-    // 標準トリオン兵バリエーション
-    const mobTypes = [
-      { name: 'バムスター',   color: 0xe53e3e, scale: 1.15, hp: 160, atk: 14, speed: 0.080, range: 2.4 },
-      { name: 'モールモッド', color: 0x38bdf8, scale: 0.90, hp: 110, atk: 16, speed: 0.135, range: 2.1 },
-      { name: 'バンダー',     color: 0xdd6b20, scale: 1.30, hp: 230, atk: 20, speed: 0.060, range: 2.6, ranged: true }
-    ];
-    if (floor >= 6) {
-      mobTypes.push({ name: 'イルガー（爆撃型）', color: 0xd53f8c, scale: 1.25, hp: 260, atk: 26, speed: 0.110, range: 3.0, ranged: true });
-    }
+    const arch = RIVAL_ARCHETYPES[(floor - 1) % RIVAL_ARCHETYPES.length];
+    const tierIdx = Math.min(arch.names.length - 1, Math.floor((floor - 1) / 3));
+    const rivalName = `【Rank.${floor}】${arch.names[tierIdx]}`;
 
-    const scaleMult = 1 + (floor - 1) * 0.22;
+    const baseTrion = 320 + (floor - 1) * 95;
+    const maxHp = Math.round(baseTrion * arch.trionMult);
+    const atk = Math.round((24 + (floor - 1) * 5) * arch.powerMult);
 
-    if (!isBossFloor) {
-      const rareIndex = (spawnPoints.length > 0 && Math.random() < 0.08)
-        ? Math.floor(Math.random() * spawnPoints.length)
-        : -1;
+    const rival = this.createRivalAgent({
+      name: rivalName,
+      role: arch.role,
+      x: rivalStart.x,
+      z: rivalStart.z,
+      color: arch.color,
+      visorColor: arch.visorColor,
+      scale: 1.0,
+      hp: maxHp,
+      maxHp,
+      aiTrion: maxHp,
+      aiMaxTrion: maxHp,
+      atk,
+      speed: arch.speed,
+      preferredDist: arch.preferredDist,
+      aiReaction: Math.min(0.95, arch.aiReaction + floor * 0.015),
+      floor
+    });
 
-      spawnPoints.forEach((pt, idx) => {
-        if (idx === rareIndex) {
-          const rDef = RARE_TRION_SOLDIERS[Math.floor(Math.random() * RARE_TRION_SOLDIERS.length)];
-          const hp = Math.round(220 * scaleMult * rDef.hpMult);
-          const atk = Math.round(18 * (1 + (floor - 1) * 0.16) * rDef.atkMult);
-          this.onToast(`⚠️ レーダー反応！${rDef.name} が出現！`);
-
-          this.createEnemy({
-            name: rDef.name,
-            x: pt.x,
-            z: pt.z,
-            color: rDef.color,
-            scale: rDef.scale,
-            hp,
-            maxHp: hp,
-            atk,
-            speed: rDef.speed,
-            atkRange: rDef.range,
-            isBoss: false,
-            isRare: true,
-            rareBuffType: rDef.buffType,
-            ranged: rDef.ranged,
-            floor
-          });
-          return;
-        }
-
-        const base = mobTypes[Math.floor(Math.random() * mobTypes.length)];
-        const hp = Math.round(base.hp * scaleMult);
-        const atk = Math.round(base.atk * (1 + (floor - 1) * 0.16));
-
-        this.createEnemy({
-          name: base.name,
-          x: pt.x,
-          z: pt.z,
-          color: base.color,
-          scale: base.scale,
-          hp,
-          maxHp: hp,
-          atk,
-          speed: base.speed,
-          atkRange: base.range,
-          isBoss: false,
-          isRare: false,
-          ranged: !!base.ranged,
-          floor
-        });
-      });
-      return;
-    }
-
-    // 強敵エリア（X.5F）
-    if (bossPoint) {
-      const def = getBossDefinition(floor);
-      const isMajor = (floor >= 10 && floor % 10 === 0);
-      const baseBossHp = isMajor ? 3400 : 1350;
-      const bossHp = Math.round(baseBossHp * scaleMult * def.hpMult);
-      const bossAtk = Math.round((isMajor ? 30 : 20) * (1 + (floor - 1) * 0.14) * def.atkMult);
-      const weakTypes = ['melee', 'ranged', 'skill'];
-
-      const boss = this.createEnemy({
-        name: def.name,
-        bossType: def.type,
-        x: bossPoint.x,
-        z: bossPoint.z,
-        color: def.color,
-        scale: def.scale,
-        hp: bossHp,
-        maxHp: bossHp,
-        atk: bossAtk,
-        speed: 0.092,
-        atkRange: 4.0,
-        isBoss: true,
-        isRare: false,
-        floor,
-        enraged: false,
-        lastPattern: null,
-        pendingPattern: null,
-        hasBarrierMechanics: isMajor,
-        barrierThresholds: isMajor ? [0.75, 0.50, 0.25] : [],
-        hasBarrier: false,
-        hasAdaptiveArmor: floor >= 15,
-        weakness: weakTypes[Math.floor(Math.random() * weakTypes.length)],
-        breakGauge: 0
-      });
-
-      this.activeBoss = boss;
-      if (boss.hasAdaptiveArmor) {
-        const wLabel = { melee: '近接(弧月等)', ranged: '射撃(アステロイド)', skill: 'トリガースキル' }[boss.weakness];
-        this.onToast(`🛡️ 装甲適応システム稼働：現在の有効攻撃は【${wLabel}】！`);
-      }
-    }
+    this.activeBoss = rival;
+    this.onToast(`⚔️ ランク模擬戦開始！対戦相手：${rivalName}（${arch.title}）`);
   }
 
-  createEnemy(cfg) {
+  createRivalAgent(cfg) {
     const root = new THREE.Group();
     root.position.set(cfg.x, 0, cfg.z);
     this.scene.add(root);
 
-    const s = cfg.scale;
+    // 隊員モデル（ボディ・ヘッド・バイザー・ブレード・シールド）
     const mat = new THREE.MeshStandardMaterial({
-      color: cfg.color,
+      color: 0x1e293b,
       emissive: cfg.color,
-      emissiveIntensity: cfg.isBoss ? 0.28 : 0.12,
-      roughness: 0.4,
-      transparent: true,
-      opacity: 1.0
+      emissiveIntensity: 0.15,
+      roughness: 0.4
     });
 
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.9 * s, 1.3 * s, 0.9 * s), mat);
-    body.position.y = 0.75 * s;
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.38, 0.9, 6, 12), mat);
+    body.position.y = 0.85;
     body.castShadow = true;
     root.add(body);
 
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.65 * s, 0.65 * s, 0.65 * s), mat);
-    head.position.y = 1.65 * s;
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.32, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.3 })
+    );
+    head.position.y = 1.75;
     head.castShadow = true;
     root.add(head);
 
-    // トリオン兵特有の単眼センサー
-    const eye = new THREE.Mesh(
-      new THREE.BoxGeometry(0.45 * s, 0.14 * s, 0.1 * s),
-      new THREE.MeshBasicMaterial({ color: 0xff1144 })
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.12, 0.2),
+      new THREE.MeshBasicMaterial({ color: cfg.visorColor })
     );
-    eye.position.set(0, 1.68 * s, 0.34 * s);
-    root.add(eye);
+    visor.position.set(0, 1.78, 0.26);
+    root.add(visor);
 
-    let barrierMesh = null;
-    if (cfg.isBoss) {
-      barrierMesh = new THREE.Mesh(
-        new THREE.SphereGeometry(1.7 * s, 18, 18),
-        new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.65 })
-      );
-      barrierMesh.position.y = 1.2 * s;
-      barrierMesh.visible = false;
-      root.add(barrierMesh);
-    } else if (cfg.isRare) {
-      const rareAura = new THREE.Mesh(
-        new THREE.RingGeometry(1.1 * s, 1.45 * s, 24),
-        new THREE.MeshBasicMaterial({ color: 0xffd36a, side: THREE.DoubleSide, transparent: true, opacity: 0.75 })
-      );
-      rareAura.rotation.x = -Math.PI / 2;
-      rareAura.position.y = 0.08;
-      root.add(rareAura);
-      cfg._rareAura = rareAura;
-    }
+    // 弧月ブレード（アタッカー・オールラウンダー用）
+    const swordPivot = new THREE.Group();
+    swordPivot.position.set(-0.5, 1.1, 0.1);
+    root.add(swordPivot);
 
-    const warnGeo = new THREE.RingGeometry(0.2, cfg.atkRange, 28);
-    const warnMat = new THREE.MeshBasicMaterial({
-      color: 0xff2244,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.0
-    });
-    const warnRing = new THREE.Mesh(warnGeo, warnMat);
-    warnRing.rotation.x = -Math.PI / 2;
-    warnRing.position.y = 0.06;
-    root.add(warnRing);
-
-    const stunBox = new THREE.Mesh(
-      new THREE.BoxGeometry(1.35 * s, 2.1 * s, 1.35 * s),
-      new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.32 })
+    const bladeMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 1.45, 0.16),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: cfg.color, emissiveIntensity: 0.65 })
     );
-    stunBox.position.y = 1.05 * s;
-    stunBox.visible = false;
-    root.add(stunBox);
+    bladeMesh.position.set(0, 0.65, 0.25);
+    bladeMesh.rotation.x = 0.35;
+    bladeMesh.visible = cfg.role !== 'shooter';
+    swordPivot.add(bladeMesh);
 
+    // AIシールド（展開中可視化メッシュ）
+    const shieldBubble = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.3, 1),
+      new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.6 })
+    );
+    shieldBubble.position.y = 1.1;
+    shieldBubble.visible = false;
+    root.add(shieldBubble);
+
+    // 頭上HPバー
     const hpBg = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.4 * s, 0.16),
+      new THREE.PlaneGeometry(1.4, 0.15),
       new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide })
     );
-    hpBg.position.y = 2.4 * s;
+    hpBg.position.y = 2.35;
     root.add(hpBg);
 
     const hpFill = new THREE.Mesh(
-      new THREE.PlaneGeometry(1.34 * s, 0.11),
-      new THREE.MeshBasicMaterial({ color: cfg.isBoss ? 0xff1144 : cfg.isRare ? 0xffd36a : 0xe53e3e, side: THREE.DoubleSide })
+      new THREE.PlaneGeometry(1.34, 0.10),
+      new THREE.MeshBasicMaterial({ color: cfg.color, side: THREE.DoubleSide })
     );
-    hpFill.position.set(0, 2.4 * s, 0.01);
+    hpFill.position.set(0, 2.35, 0.01);
     root.add(hpFill);
 
-    const enemy = {
+    const agent = {
       ...cfg,
       root,
       body,
       mat,
-      barrierMesh,
-      warnRing,
-      warnMat,
-      stunBox,
+      swordPivot,
+      shieldBubble,
       hpBg,
       hpFill,
-      hpBarWidth: 1.34 * s,
-      state: 'idle',
-      stateTimer: 0,
-      patternTimer: 2.2,
-      dashVel: new THREE.Vector3(),
+      hpBarWidth: 1.34,
+      isBoss: true,
+      isRivalAgent: true,
+
+      // 戦術ステートマシン
+      aiState: 'flank', // 'flank'（遮蔽・回り込み）| 'engage'（交戦）| 'evade'（距離調整・離脱）| 'windup'（大技溜め）
+      aiDecisionTimer: 0.35,
+      strafeSign: Math.random() < 0.5 ? 1 : -1,
+      velocityY: 0,
+      onGround: true,
+
+      // クールダウン管理（プレイヤーと同条件）
+      cdNormal: 0,
+      cdSub: 0,
+      cdMobility: 0,
+      cdShield: 0,
+      shieldUntil: 0,
+      dodgeUntil: 0,
+      dodgeVel: new THREE.Vector3(),
       stunUntil: 0,
-      slowUntil: 0,
-      hitFlashUntil: 0
+      hitFlashUntil: 0,
+      windupTimer: 0,
+      pendingSkill: null
     };
 
-    this.enemies.push(enemy);
-    return enemy;
+    this.enemies.push(agent);
+    return agent;
   }
 
-  onPlayerSkillUsed() {
-    // 拡張用フック（人型ネイバーの反応行動など）
+  // プレイヤーがトリガーを使った瞬間にAIが反応（シールド・回避）
+  onPlayerSkillUsed(playerPos) {
+    const now = performance.now();
+    for (const agent of this.enemies) {
+      if (!agent.isRivalAgent || agent.hp <= 0 || now < agent.stunUntil) continue;
+      const dist = agent.root.position.distanceTo(playerPos);
+      if (dist > 28) continue;
+
+      if (Math.random() < agent.aiReaction) {
+        if (now >= agent.cdShield && agent.aiTrion >= 15) {
+          this.activateAgentShield(agent, 2200);
+        } else if (now >= agent.cdMobility && agent.aiTrion >= 15) {
+          this.useAgentGrasshopper(agent, playerPos, 'evade');
+        }
+      }
+    }
+  }
+
+  activateAgentShield(agent, durationMs = 2400) {
+    const now = performance.now();
+    agent.aiTrion = Math.max(0, agent.aiTrion - 10);
+    agent.shieldUntil = now + durationMs;
+    agent.cdShield = now + 5200;
+    agent.shieldBubble.visible = true;
+  }
+
+  useAgentGrasshopper(agent, targetPos, mode = 'approach') {
+    const now = performance.now();
+    if (now < agent.cdMobility || agent.aiTrion < 10) return false;
+    agent.aiTrion -= 10;
+    agent.cdMobility = now + 2200;
+
+    // 緑の反発パッド生成
+    const pad = new THREE.Mesh(
+      new THREE.RingGeometry(0.4, 1.5, 24),
+      new THREE.MeshBasicMaterial({ color: 0x48bb78, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(agent.root.position.x, agent.root.position.y + 0.1, agent.root.position.z);
+    this.scene.add(pad);
+    this.fxMeshes.push({ mesh: pad, life: 0.45, maxLife: 0.45 });
+
+    const toTarget = targetPos.clone().sub(agent.root.position).setY(0).normalize();
+    const right = new THREE.Vector3(-toTarget.z, 0, toTarget.x);
+
+    if (mode === 'approach') {
+      // 相手の斜め上空へ立体跳躍して死角を突く
+      agent.dodgeVel.copy(toTarget).addScaledVector(right, agent.strafeSign * 0.55).normalize().multiplyScalar(0.42);
+      agent.velocityY = 0.34;
+    } else if (mode === 'highground') {
+      // ビル屋上への垂直大跳躍
+      agent.dodgeVel.copy(toTarget).multiplyScalar(0.22);
+      agent.velocityY = 0.48;
+    } else {
+      // 緊急離脱（後方＋横ステップ）
+      agent.dodgeVel.copy(toTarget).multiplyScalar(-0.38).addScaledVector(right, agent.strafeSign * 0.45).normalize().multiplyScalar(0.42);
+      agent.velocityY = 0.24;
+    }
+    agent.onGround = false;
+    agent.dodgeUntil = now + 320;
+    return true;
+  }
+
+  // AIのトリオンキューブ展開（0.35秒）→射撃演出
+  chargeAndFireAgentCube(agent, color, onFire) {
+    const yaw = agent.root.rotation.y;
+    const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
+    const origin = agent.root.position.clone().add(new THREE.Vector3(0, 1.5, 0)).addScaledVector(forward, 0.8);
+
+    const cube = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.42, 0.42),
+      new THREE.MeshBasicMaterial({ color, wireframe: true })
+    );
+    cube.position.copy(origin);
+    this.scene.add(cube);
+    this.fxMeshes.push({ mesh: cube, life: 0.35, maxLife: 0.35 });
+
+    setTimeout(() => {
+      if (agent.hp > 0) onFire(origin);
+    }, 350);
   }
 
   clearProjectilesInRadius(centerPos, radius) {
@@ -327,65 +319,26 @@ export class EnemyManager {
     return removed;
   }
 
-  activateBossBarrier(boss) {
-    boss.hasBarrier = true;
-    if (boss.barrierMesh) boss.barrierMesh.visible = true;
-    this.onToast('🛡️ 目標が多重シールド展開！四隅の「トリオン中継結晶」を4基破壊せよ！');
-
-    for (const oldBox of [...this.world.destructibles]) {
-      this.world.destroyBlock(oldBox);
-    }
-    for (const c of this.bossRoomCorners) {
-      this.world.addDestructibleBlock(c.x, 1.0, c.z, 0x00ffff, Math.max(40, Math.round(boss.maxHp * 0.04)));
-    }
-  }
-
-  breakBossBarrier(msg = '💥 中継結晶全破壊！多重シールド解除＋2.5秒硬直！') {
-    const boss = this.activeBoss;
-    if (!boss) return;
-    boss.hasBarrier = false;
-    if (boss.barrierMesh) boss.barrierMesh.visible = false;
-    boss.stunUntil = performance.now() + 2500;
-    this.onToast(msg);
-  }
-
   damageEnemy(enemy, rawDmg, opts = {}) {
     if (!enemy || enemy.hp <= 0) return false;
     const now = performance.now();
-    const cat = opts.attackCategory || 'melee';
 
-    if (enemy.isBoss && enemy.hasBarrier) {
-      const popupPos = enemy.root.position.clone().add(new THREE.Vector3(0, 1.8 * enemy.scale, 0));
-      this.onDamagePopup(popupPos, 'SHIELD', false);
+    // AIがステップ回避中の場合はジャスト回避判定
+    if (now < enemy.dodgeUntil && Math.random() < 0.45) {
+      const popupPos = enemy.root.position.clone().add(new THREE.Vector3(0, 2.0, 0));
+      this.onDamagePopup(popupPos, 'DODGE', false);
       return false;
     }
 
     let dmg = Math.round(rawDmg);
 
-    // 装甲ブレイク中の被ダメージ2.5倍
-    if (enemy.stunUntil > now && enemy.isAdaptiveBroken) {
-      dmg = Math.round(dmg * 2.5);
-    }
-
-    // 装甲適応システム（有効攻撃カテゴリでブレイク蓄積、不一致は軽減）
-    if (enemy.isBoss && enemy.hasAdaptiveArmor && enemy.stunUntil <= now) {
-      enemy.isAdaptiveBroken = false;
-      if (cat === enemy.weakness) {
-        dmg = Math.round(dmg * 1.25);
-        const addBreak = (cat === 'skill') ? 24 : 14;
-        enemy.breakGauge = Math.min(100, enemy.breakGauge + addBreak);
-        if (enemy.breakGauge >= 100) {
-          enemy.breakGauge = 0;
-          enemy.isAdaptiveBroken = true;
-          enemy.stunUntil = now + 3500;
-          const weakTypes = ['melee', 'ranged', 'skill'].filter((t) => t !== enemy.weakness);
-          enemy.weakness = weakTypes[Math.floor(Math.random() * weakTypes.length)];
-          const wLabel = { melee: '近接(弧月等)', ranged: '射撃(アステロイド)', skill: 'トリガースキル' }[enemy.weakness];
-          this.onToast(`💥 装甲ブレイク(3.5秒・被ダメ2.5倍)！次の有効攻撃は【${wLabel}】！`);
-        }
-      } else {
-        dmg = Math.round(dmg * 0.45);
-      }
+    // AIがシールド展開中ならダメージ70%カット
+    if (now < enemy.shieldUntil) {
+      dmg = Math.max(1, Math.round(dmg * 0.30));
+      this.world.spawnHitSpark(enemy.root.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 0x00ffff);
+    } else if (enemy.isRivalAgent && now >= enemy.cdShield && enemy.aiTrion >= 15 && Math.random() < enemy.aiReaction * 0.45) {
+      // 被弾直後に反射的にシールドを張って追撃を防ぐ
+      this.activateAgentShield(enemy, 2000);
     }
 
     enemy.hp = Math.max(0, enemy.hp - dmg);
@@ -393,28 +346,16 @@ export class EnemyManager {
 
     if (opts.stunMs) {
       enemy.stunUntil = Math.max(enemy.stunUntil, now + opts.stunMs);
-      enemy.state = 'idle';
-      enemy.warnMat.opacity = 0;
+      enemy.aiState = 'flank';
     }
 
-    const popupPos = enemy.root.position.clone().add(new THREE.Vector3(0, 1.8 * enemy.scale, 0));
-    this.onDamagePopup(popupPos, dmg, opts.isCrit || enemy.stunUntil > now);
+    const popupPos = enemy.root.position.clone().add(new THREE.Vector3(0, 2.0, 0));
+    this.onDamagePopup(popupPos, dmg, opts.isCrit || false);
     this.world.spawnHitSpark(popupPos, opts.color || 0x00ffff);
 
     const ratio = Math.max(0, enemy.hp / enemy.maxHp);
     enemy.hpFill.scale.x = Math.max(0.001, ratio);
     enemy.hpFill.position.x = -(1 - ratio) * (enemy.hpBarWidth * 0.5);
-
-    if (enemy.isBoss && enemy.hp > 0) {
-      if (!enemy.enraged && ratio <= 0.5) {
-        enemy.enraged = true;
-        this.onToast('💢 目標がリミッター解除状態に突入！攻撃速度＆弾幕強化！');
-      }
-      if (enemy.barrierThresholds.length > 0 && ratio <= enemy.barrierThresholds[0]) {
-        enemy.barrierThresholds.shift();
-        this.activateBossBarrier(enemy);
-      }
-    }
 
     if (enemy.hp <= 0) {
       this.killEnemy(enemy);
@@ -425,9 +366,15 @@ export class EnemyManager {
 
   killEnemy(enemy) {
     const pos = enemy.root.position.clone();
-    for (let i = 0; i < 12; i++) {
-      this.world.spawnHitSpark(pos.clone().add(new THREE.Vector3(0, 1, 0)), enemy.color);
-    }
+
+    // ベイルアウト（光の柱となって緊急脱出）演出
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.85, 0.85, 32, 16),
+      new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.9 })
+    );
+    beam.position.set(pos.x, 16, pos.z);
+    this.scene.add(beam);
+    this.fxMeshes.push({ mesh: beam, life: 0.75, maxLife: 0.75 });
 
     this.scene.remove(enemy.root);
     this.enemies = this.enemies.filter((e) => e !== enemy);
@@ -438,11 +385,11 @@ export class EnemyManager {
       this.world.unlockExitPortal();
     }
 
-    const expGain = EXP_PER_KILL * (enemy.isBoss ? 10 : enemy.isRare ? 3 : 1);
-    const ptsGain = pointsFor(enemy.floor, enemy.isBoss) * (enemy.isRare ? 2 : 1);
+    const expGain = EXP_PER_KILL * 8;
+    const ptsGain = pointsFor(enemy.floor, true);
     PLAYER.exp += expGain;
     PLAYER.points += ptsGain;
-    state.exsGauge = Math.min(EXS_GAUGE_MAX, state.exsGauge + (enemy.isBoss ? 40 : 12));
+    state.exsGauge = Math.min(EXS_GAUGE_MAX, state.exsGauge + 40);
 
     while (PLAYER.exp >= expNeed(PLAYER.lv)) {
       PLAYER.exp -= expNeed(PLAYER.lv);
@@ -451,226 +398,290 @@ export class EnemyManager {
       this.onToast(`🎉 隊員ランクUP! Lv.${PLAYER.lv} (強化Pt +3)`);
     }
 
-    if (enemy.isBoss) {
-      SAVE.cleared = Math.max(SAVE.cleared, enemy.floor);
-      this.onToast(`🏆 ${enemy.floor}.5F 目標撃破！功績 +${ptsGain} PTS ＆ EXS+40%`);
-    } else if (enemy.isRare) {
-      if (enemy.rareBuffType === 'trion') {
-        PLAYER.bonusTrion = (PLAYER.bonusTrion || 0) + 50;
-        if (this.playerRef) this.playerRef.trion += 50;
-        this.onToast('🌟 特級トリオン兵撃破！最大トリオン容量 +50（永続）！');
-      } else {
-        PLAYER.bonusPower = (PLAYER.bonusPower || 0) + 25;
-        this.onToast('🌟 特級トリオン兵撃破！トリオン出力 +25（永続）！');
-      }
-    }
-
+    SAVE.cleared = Math.max(SAVE.cleared, enemy.floor);
+    this.onToast(`🏆 目標ベイルアウト確認！功績 +${ptsGain} PTS ＆ EXS+40%`);
     saveGame();
   }
 
-  fireEnemyOrb(enemy, dir, speed = 0.25, homing = false) {
+  fireAgentOrb(agent, originPos, dir, speed = 0.52, dmgMult = 1.0, opts = {}) {
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.35, 10, 10),
-      new THREE.MeshBasicMaterial({ color: homing ? 0xff00ff : enemy.color })
+      new THREE.SphereGeometry(opts.radius || 0.22, 8, 8),
+      new THREE.MeshBasicMaterial({ color: opts.color || agent.color })
     );
-    mesh.position.copy(enemy.root.position).add(new THREE.Vector3(0, 1.2 * enemy.scale, 0));
+    mesh.position.copy(originPos);
     this.scene.add(mesh);
 
     this.enemyProjectiles.push({
       mesh,
       vel: dir.clone().multiplyScalar(speed),
-      atk: enemy.atk,
-      life: 3.5,
-      homing
+      atk: Math.round(agent.atk * dmgMult),
+      life: opts.life || 2.8,
+      homing: !!opts.homing,
+      isExplosive: !!opts.isExplosive
     });
   }
 
-  beginBossPatternWindup(boss) {
-    const f = boss.floor;
-    const warnMult = boss.enraged ? 0.7 : 1.0;
-
-    const pool = ['omni', 'fan', 'dash'];
-    if (f >= 3) pool.push('summon', 'homing');
-    if (f >= 5) pool.push('shockwave');
-    if (f >= 10) pool.push('eruption');
-    if (f >= 15) pool.push('blaster');
-
-    const candidates = pool.filter((p) => p !== boss.lastPattern);
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    boss.lastPattern = pick;
-    boss.pendingPattern = pick;
-
-    const baseWarn = {
-      omni: 0.8, fan: 0.6, dash: 0.9, summon: 1.0,
-      homing: 0.7, shockwave: 1.1, eruption: 1.8, blaster: 1.2
-    }[pick] || 0.8;
-
-    boss.state = 'pattern_windup';
-    boss.stateTimer = baseWarn * warnMult;
+  swingAgentBlade(agent) {
+    agent.swordPivot.rotation.x = 1.4;
+    let t = 0;
+    const anim = () => {
+      t += 0.2;
+      if (t >= 1) {
+        agent.swordPivot.rotation.x = 0;
+        return;
+      }
+      agent.swordPivot.rotation.x = THREE.MathUtils.lerp(1.4, -1.1, t);
+      requestAnimationFrame(anim);
+    };
+    requestAnimationFrame(anim);
   }
 
-  executeBossPattern(boss, targetPos) {
-    const pick = boss.pendingPattern;
-    const f = boss.floor;
-    const enraged = boss.enraged;
-    const toP = targetPos.clone().sub(boss.root.position).setY(0).normalize();
+  // ---- ステップ2：人型隊員AIの戦術思考・行動ルーチン ----
+  updateRivalAgent(agent, dt, player) {
+    const now = performance.now();
+    const pPos = player.root.position;
+    const aPos = agent.root.position;
 
-    if (pick === 'omni') {
-      const count = enraged ? 18 : 12;
-      for (let i = 0; i < count; i++) {
-        const ang = (Math.PI * 2 * i) / count;
-        this.fireEnemyOrb(boss, new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang)), 0.24);
-      }
-    } else if (pick === 'fan') {
-      const count = enraged ? 7 : 5;
-      const spread = 0.16;
-      for (let i = 0; i < count; i++) {
-        const off = (i - (count - 1) / 2) * spread;
-        const d = toP.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), off);
-        this.fireEnemyOrb(boss, d, 0.27);
-      }
-    } else if (pick === 'dash') {
-      boss.state = 'dash';
-      boss.stateTimer = 0.55;
-      boss.dashVel.copy(toP).multiplyScalar(0.36);
-      return;
-    } else if (pick === 'summon') {
-      const minionCount = this.enemies.filter((e) => !e.isBoss).length;
-      if (minionCount < 5) {
-        const addCount = enraged ? 2 : 1;
-        for (let i = 0; i < addCount; i++) {
-          const sx = boss.root.position.x + (Math.random() - 0.5) * 6;
-          const sz = boss.root.position.z + (Math.random() - 0.5) * 6;
-          this.createEnemy({
-            name: '増援モールモッド',
-            x: sx, z: sz,
-            color: 0x38bdf8, scale: 0.9,
-            hp: Math.round(boss.maxHp * 0.08),
-            maxHp: Math.round(boss.maxHp * 0.08),
-            atk: Math.round(boss.atk * 0.5),
-            speed: 0.12, atkRange: 2.1,
-            isBoss: false, isRare: false, floor: f
-          });
+    // シールド視覚効果更新
+    agent.shieldBubble.visible = now < agent.shieldUntil;
+    if (agent.shieldBubble.visible) {
+      agent.shieldBubble.rotation.y += dt * 3.0;
+    }
+
+    // トリオン自然回復
+    agent.aiTrion = Math.min(agent.aiMaxTrion, agent.aiTrion + agent.aiMaxTrion * 0.015 * dt);
+
+    if (now < agent.stunUntil) return;
+
+    // 飛来してくるプレイヤーの弾を検知して自動シールド／回避
+    if (now >= agent.cdShield && now >= agent.shieldUntil && agent.aiTrion >= 15) {
+      for (const proj of player.projectiles) {
+        if (proj.mesh.position.distanceTo(aPos) < 6.5 && Math.random() < agent.aiReaction * 0.25) {
+          this.activateAgentShield(agent, 2000);
+          break;
         }
-        this.onToast('👾 目標が増援トリオン兵を展開した！');
-      }
-    } else if (pick === 'homing') {
-      this.fireEnemyOrb(boss, toP, 0.21, true);
-    } else if (pick === 'shockwave') {
-      this.spawnHazardZone(boss.root.position.x, boss.root.position.z, 6.2, 0.35, Math.round(boss.atk * 1.3), 0xb15cff, false);
-    } else if (pick === 'eruption') {
-      this.onToast('⚠️ 広域トリオン爆撃！足元の「緑の安全地帯円」へ退避せよ！');
-      this.spawnHazardZone(targetPos.x, targetPos.z, 6.8, 0.85, Math.round(boss.atk * 1.8), 0x48bb78, true);
-    } else if (pick === 'blaster') {
-      const count = enraged ? 4 : 3;
-      this.onToast('⚡ 高出力トリオン砲照準！赤い射線から離脱せよ！');
-      const baseAngle = Math.random() * Math.PI * 2;
-      for (let i = 0; i < count; i++) {
-        const angle = baseAngle + (Math.PI * 2 * i) / count;
-        const startPos = new THREE.Vector3(
-          targetPos.x + Math.cos(angle) * 14,
-          0,
-          targetPos.z + Math.sin(angle) * 14
-        );
-        const dir = targetPos.clone().sub(startPos).setY(0).normalize();
-        this.fireBossCannon(startPos, dir, Math.round(boss.atk * 1.65));
       }
     }
 
-    boss.state = 'chase';
+    const toPlayer = pPos.clone().sub(aPos);
+    const horizDist = Math.hypot(toPlayer.x, toPlayer.z);
+    const dirHoriz = horizDist > 0.01
+      ? new THREE.Vector3(toPlayer.x, 0, toPlayer.z).normalize()
+      : new THREE.Vector3(0, 0, 1);
+
+    // 常にプレイヤーの方を向く
+    agent.root.rotation.y = Math.atan2(dirHoriz.x, dirHoriz.z);
+
+    // 大技溜め中（旋空弧月 / メテオラ）
+    if (agent.aiState === 'windup') {
+      agent.windupTimer -= dt;
+      agent.mat.emissiveIntensity = 0.85;
+      if (agent.windupTimer <= 0) {
+        agent.mat.emissiveIntensity = 0.15;
+        agent.aiState = 'engage';
+        this.executeAgentSubSkill(agent, pPos, dirHoriz);
+      }
+      this.applyAgentPhysics(agent, new THREE.Vector3());
+      return;
+    }
+
+    // 一定間隔で戦況判断（遮蔽物チェック・間合い評価・兵科別戦術切り替え）
+    agent.aiDecisionTimer -= dt;
+    const hasLOS = this.world.hasLineOfSight(aPos, pPos);
+
+    if (agent.aiDecisionTimer <= 0) {
+      agent.aiDecisionTimer = 0.35 + Math.random() * 0.25;
+      if (Math.random() < 0.35) agent.strafeSign *= -1;
+
+      if (!hasLOS && horizDist > 7.0) {
+        // ビル陰に隠れている間は回り込み接近（フランク移動）
+        agent.aiState = 'flank';
+      } else if (agent.role === 'shooter' && horizDist < 8.5) {
+        // シューターは近距離に詰められたら離脱優先
+        agent.aiState = 'evade';
+        if (now >= agent.cdMobility) this.useAgentGrasshopper(agent, pPos, 'evade');
+      } else if (agent.role === 'attacker' && horizDist > 9.0 && hasLOS && now >= agent.cdMobility) {
+        // アタッカーは射線が通ったらグラスホッパーで一気に距離を詰める
+        this.useAgentGrasshopper(agent, pPos, 'approach');
+        agent.aiState = 'engage';
+      } else if (pPos.y > aPos.y + 2.2 && now >= agent.cdMobility) {
+        // プレイヤーがビル屋上にいる場合、グラスホッパーで高所へ追撃
+        this.useAgentGrasshopper(agent, pPos, 'highground');
+      } else {
+        agent.aiState = 'engage';
+      }
+    }
+
+    // 移動ベクトル決定
+    let moveVec = new THREE.Vector3();
+    if (now < agent.dodgeUntil) {
+      moveVec.copy(agent.dodgeVel);
+    } else {
+      const right = new THREE.Vector3(-dirHoriz.z, 0, dirHoriz.x).multiplyScalar(agent.strafeSign);
+
+      if (agent.aiState === 'flank') {
+        // ビルの角を回り込むように斜め前進
+        moveVec.copy(dirHoriz).multiplyScalar(0.75).addScaledVector(right, 0.65).normalize().multiplyScalar(agent.speed * 1.1);
+      } else if (agent.aiState === 'evade') {
+        // 撃ちながら後退＋横移動
+        moveVec.copy(dirHoriz).multiplyScalar(-0.85).addScaledVector(right, 0.55).normalize().multiplyScalar(agent.speed * 1.05);
+      } else {
+        // 兵科ごとの適正距離（preferredDist）を保ちつつ左右ストレイフ機動
+        const diff = horizDist - agent.preferredDist;
+        const forwardFactor = Math.abs(diff) < 1.5 ? 0 : Math.sign(diff) * 0.7;
+        moveVec.copy(dirHoriz).multiplyScalar(forwardFactor).addScaledVector(right, 0.85).normalize().multiplyScalar(agent.speed);
+      }
+    }
+
+    this.applyAgentPhysics(agent, moveVec);
+
+    // 攻撃・スキル実行判断
+    if (hasLOS || horizDist <= 5.0) {
+      this.tryAgentAttack(agent, now, horizDist, pPos, dirHoriz);
+    }
   }
 
-  spawnHazardZone(x, z, radius, delaySec, atk, color, isSafeZone = false) {
-    const geo = isSafeZone
-      ? new THREE.RingGeometry(radius - 0.4, radius, 32)
-      : new THREE.CircleGeometry(radius, 28);
-    const ring = new THREE.Mesh(
-      geo,
-      new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.45 })
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(x, 0.09, z);
-    this.scene.add(ring);
+  tryAgentAttack(agent, now, dist, pPos, dirHoriz) {
+    // 1. サブトリガー（大技）の使用判定
+    if (now >= agent.cdSub && agent.aiTrion >= 40) {
+      if (agent.role === 'attacker' && dist <= 8.5) {
+        // 旋空弧月（長距離斬撃波）の予備動作へ
+        agent.aiTrion -= 40;
+        agent.cdSub = now + 4800;
+        agent.aiState = 'windup';
+        agent.windupTimer = 0.42;
+        agent.pendingSkill = 'senku';
+        this.onToast(`⚠️ ${agent.name} が旋空弧月の構えに入った！`);
+        return;
+      }
+      if (agent.role === 'shooter' && dist >= 7.0 && dist <= 26.0) {
+        // バイパー / メテオラ展開
+        agent.aiTrion -= 45;
+        agent.cdSub = now + 4500;
+        agent.aiState = 'windup';
+        agent.windupTimer = 0.45;
+        agent.pendingSkill = Math.random() < 0.5 ? 'viper' : 'meteora';
+        return;
+      }
+      if (agent.role === 'allrounder' && dist <= 18.0) {
+        // エスクードで遮蔽 or ハウンド追撃
+        agent.aiTrion -= 40;
+        agent.cdSub = now + 4600;
+        if (dist <= 6.5) {
+          this.spawnAgentEscudo(agent, dirHoriz);
+        } else {
+          agent.aiState = 'windup';
+          agent.windupTimer = 0.4;
+          agent.pendingSkill = 'hound';
+        }
+        return;
+      }
+    }
 
-    this.hazardZones.push({
-      mesh: ring,
-      pos: new THREE.Vector3(x, 0, z),
-      radius,
-      timer: delaySec,
-      maxTimer: delaySec,
-      atk,
-      color,
-      isSafeZone
+    // 2. 通常トリガー（弧月斬撃 / アステロイド連射）
+    if (now >= agent.cdNormal) {
+      if (agent.role !== 'shooter' && dist <= 3.6) {
+        // 弧月近接斬撃
+        agent.cdNormal = now + 680;
+        this.swingAgentBlade(agent);
+
+        const arc = new THREE.Mesh(
+          new THREE.RingGeometry(1.4, 3.6, 20, 1, -Math.PI * 0.35, Math.PI * 0.7),
+          new THREE.MeshBasicMaterial({ color: agent.color, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
+        );
+        arc.position.copy(agent.root.position).add(new THREE.Vector3(0, 1.1, 0));
+        arc.rotation.x = -Math.PI / 2;
+        arc.rotation.z = -agent.root.rotation.y + Math.PI / 2;
+        this.scene.add(arc);
+        this.fxMeshes.push({ mesh: arc, life: 0.18, maxLife: 0.18 });
+
+        if (this.playerRef && this.playerRef.root.position.distanceTo(agent.root.position) <= 3.8) {
+          this.playerRef.receiveEnemyAttack(agent.atk, agent.root.position);
+        }
+      } else if (dist <= 26.0 && agent.aiTrion >= 8) {
+        // アステロイド射撃（キューブ展開後に3連射）
+        agent.aiTrion -= 8;
+        agent.cdNormal = now + (agent.role === 'shooter' ? 950 : 1350);
+        this.chargeAndFireAgentCube(agent, 0x00ffff, (origin) => {
+          if (!this.playerRef) return;
+          const targetHead = this.playerRef.root.position.clone().add(new THREE.Vector3(0, 1.1, 0));
+          const aimDir = targetHead.sub(origin).normalize();
+          for (let i = 0; i < 3; i++) {
+            setTimeout(() => {
+              if (agent.hp > 0) {
+                this.fireAgentOrb(agent, origin, aimDir, 0.62, 0.55, { radius: 0.16, color: 0x00ffff });
+              }
+            }, i * 70);
+          }
+        });
+      }
+    }
+  }
+
+  executeAgentSubSkill(agent, pPos, dirHoriz) {
+    const skill = agent.pendingSkill;
+    if (skill === 'senku') {
+      this.swingAgentBlade(agent);
+      const origin = agent.root.position.clone().add(new THREE.Vector3(0, 1.1, 0));
+      this.fireAgentOrb(agent, origin, dirHoriz, 0.78, 1.55, { radius: 0.55, color: 0x48bb78, life: 1.2 });
+    } else if (skill === 'viper') {
+      this.chargeAndFireAgentCube(agent, 0x00ffff, (origin) => {
+        for (let i = 0; i < 5; i++) {
+          const off = (i - 2) * 0.22;
+          const d = dirHoriz.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), off);
+          this.fireAgentOrb(agent, origin, d, 0.52, 0.65, { radius: 0.17, color: 0x00ffff, homing: true });
+        }
+      });
+    } else if (skill === 'meteora') {
+      this.chargeAndFireAgentCube(agent, 0xff4500, (origin) => {
+        for (let i = 0; i < 3; i++) {
+          const off = (i - 1) * 0.16;
+          const d = dirHoriz.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), off);
+          this.fireAgentOrb(agent, origin, d, 0.56, 0.95, { radius: 0.26, color: 0xff4500, isExplosive: true });
+        }
+      });
+    } else if (skill === 'hound') {
+      this.chargeAndFireAgentCube(agent, 0x63b3ed, (origin) => {
+        for (let i = 0; i < 6; i++) {
+          const off = (i - 2.5) * 0.15;
+          const d = dirHoriz.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), off);
+          this.fireAgentOrb(agent, origin, d, 0.50, 0.55, { radius: 0.16, color: 0x63b3ed, homing: true });
+        }
+      });
+    }
+  }
+
+  spawnAgentEscudo(agent, dirHoriz) {
+    const right = new THREE.Vector3(-dirHoriz.z, 0, dirHoriz.x);
+    const center = agent.root.position.clone().addScaledVector(dirHoriz, 2.6);
+    [-1.6, 0, 1.6].forEach((offset) => {
+      const pos = center.clone().addScaledVector(right, offset);
+      if (!this.world.isBlockedForEntity(pos.x, pos.z, 0.6, agent.root.position.y)) {
+        this.world.addDestructibleBlock(pos.x, agent.root.position.y + 0.8, pos.z, 0x00ffff, 70);
+        this.world.addDestructibleBlock(pos.x, agent.root.position.y + 2.4, pos.z, 0x00ffff, 70);
+      }
     });
   }
 
-  fireBossCannon(startPos, dir, atk) {
-    const length = 30;
-    const width = 1.6;
-    const midPos = startPos.clone().addScaledVector(dir, length * 0.5);
-    const rotY = Math.atan2(dir.x, dir.z);
+  applyAgentPhysics(agent, moveVec) {
+    const pos = agent.root.position;
+    const nextX = pos.x + moveVec.x;
+    const nextZ = pos.z + moveVec.z;
 
-    const warnMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, length),
-      new THREE.MeshBasicMaterial({ color: 0xff1144, side: THREE.DoubleSide, transparent: true, opacity: 0.45 })
-    );
-    warnMesh.rotation.x = -Math.PI / 2;
-    warnMesh.rotation.z = -rotY;
-    warnMesh.position.set(midPos.x, 0.08, midPos.z);
-    this.scene.add(warnMesh);
+    if (!this.world.isBlockedForEntity(nextX, pos.z, 0.45, pos.y)) pos.x = nextX;
+    if (!this.world.isBlockedForEntity(pos.x, nextZ, 0.45, pos.y)) pos.z = nextZ;
 
-    const pod = new THREE.Mesh(
-      new THREE.BoxGeometry(1.5, 1.3, 1.8),
-      new THREE.MeshStandardMaterial({ color: 0x1a202c, emissive: 0xff1144, emissiveIntensity: 0.5 })
-    );
-    pod.position.set(startPos.x, 1.4, startPos.z);
-    pod.rotation.y = rotY;
-    this.scene.add(pod);
-
-    setTimeout(() => {
-      this.scene.remove(warnMesh);
-      if (!this.activeBoss || this.activeBoss.hp <= 0) {
-        this.scene.remove(pod);
-        return;
-      }
-
-      const group = new THREE.Group();
-      group.add(pod);
-
-      const outerGeo = new THREE.CylinderGeometry(width * 0.65, width * 0.65, length, 14, 1, true);
-      outerGeo.rotateX(Math.PI / 2);
-      const outerMat = new THREE.MeshBasicMaterial({
-        color: 0xff1144, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false
-      });
-      const outerBeam = new THREE.Mesh(outerGeo, outerMat);
-      outerBeam.position.set(midPos.x, 1.3, midPos.z);
-      outerBeam.rotation.y = rotY;
-      group.add(outerBeam);
-
-      const innerGeo = new THREE.CylinderGeometry(width * 0.32, width * 0.32, length, 12);
-      innerGeo.rotateX(Math.PI / 2);
-      const innerMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 });
-      const innerBeam = new THREE.Mesh(innerGeo, innerMat);
-      innerBeam.position.set(midPos.x, 1.3, midPos.z);
-      innerBeam.rotation.y = rotY;
-      group.add(innerBeam);
-
-      this.scene.add(group);
-      this.enemyBeams.push({ group, outerBeam, innerBeam, life: 0.4, maxLife: 0.4 });
-
-      if (this.playerRef && this.playerRef.root.position.y < 2.2) {
-        const p = this.playerRef.root.position;
-        const apx = p.x - startPos.x;
-        const apz = p.z - startPos.z;
-        const proj = apx * dir.x + apz * dir.z;
-        if (proj >= -0.5 && proj <= length + 0.5) {
-          const perpDist = Math.abs(apx * dir.z - apz * dir.x);
-          if (perpDist <= width * 0.65) {
-            this.playerRef.receiveEnemyAttack(atk, startPos);
-          }
-        }
-      }
-    }, 650);
+    // 重力＆ビル屋上着地判定
+    agent.velocityY -= 0.014;
+    pos.y += agent.velocityY;
+    const groundY = this.world.getGroundHeightAt(pos.x, pos.z, pos.y);
+    if (pos.y <= groundY) {
+      pos.y = groundY;
+      agent.velocityY = 0;
+      agent.onGround = true;
+    } else {
+      agent.onGround = false;
+    }
   }
 
   update(dt, player) {
@@ -678,175 +689,64 @@ export class EnemyManager {
     const now = performance.now();
     const pPos = player.root.position;
 
-    if (this.activeBoss && this.activeBoss.hasBarrier && this.world.destructibles.length === 0) {
-      this.breakBossBarrier();
-    }
-
-    this.enemyBeams = this.enemyBeams.filter((b) => {
-      b.life -= dt;
-      const ratio = Math.max(0, b.life / b.maxLife);
-      b.outerBeam.scale.set(ratio, ratio, 1);
-      b.innerBeam.scale.set(ratio, ratio, 1);
-      b.outerBeam.material.opacity = ratio * 0.6;
-      b.innerBeam.material.opacity = ratio * 0.95;
-      if (b.life <= 0) {
-        this.scene.remove(b.group);
-        return false;
-      }
-      return true;
-    });
-
-    this.hazardZones = this.hazardZones.filter((h) => {
-      h.timer -= dt;
-      h.mesh.material.opacity = 0.3 + (1 - Math.max(0, h.timer / h.maxTimer)) * 0.6;
-      if (h.timer <= 0) {
-        const dist = Math.hypot(pPos.x - h.pos.x, pPos.z - h.pos.z);
-        if (h.isSafeZone) {
-          if (dist > h.radius) player.receiveEnemyAttack(h.atk, h.pos);
-        } else {
-          for (let i = 0; i < 8; i++) {
-            this.world.spawnHitSpark(h.pos.clone().add(new THREE.Vector3(0, 1.2, 0)), h.color);
-          }
-          if (dist <= h.radius && pPos.y < 1.6) {
-            player.receiveEnemyAttack(h.atk, h.pos);
-          }
-        }
-        this.scene.remove(h.mesh);
-        return false;
-      }
-      return true;
-    });
-
     for (const enemy of [...this.enemies]) {
       enemy.hpBg.lookAt(this.camera.position);
       enemy.hpFill.lookAt(this.camera.position);
-      if (enemy._rareAura) {
-        enemy._rareAura.rotation.z += dt * 2.2;
-      }
 
       if (now < enemy.hitFlashUntil) {
         enemy.mat.emissive.setHex(0xffffff);
         enemy.mat.emissiveIntensity = 0.85;
-      } else if (enemy.state === 'pattern_windup') {
-        const blink = Math.sin(now * 0.035) > 0;
-        enemy.mat.emissive.setHex(blink ? 0xff1133 : enemy.color);
-        enemy.mat.emissiveIntensity = blink ? 0.9 : 0.25;
-      } else {
+      } else if (enemy.aiState !== 'windup') {
         enemy.mat.emissive.setHex(enemy.color);
-        enemy.mat.emissiveIntensity = enemy.isBoss ? 0.28 : 0.12;
+        enemy.mat.emissiveIntensity = 0.15;
       }
 
-      if (now < enemy.stunUntil) {
-        enemy.warnMat.opacity = 0;
-        enemy.stunBox.visible = true;
-        enemy.stunBox.rotation.y += dt * 2.5;
-        continue;
-      } else {
-        enemy.stunBox.visible = false;
-      }
-
-      const speedMult = now < enemy.slowUntil ? 0.45 : 1.0;
-      const toTarget = new THREE.Vector3(pPos.x - enemy.root.position.x, 0, pPos.z - enemy.root.position.z);
-      const dist = toTarget.length();
-      const dir = dist > 0.01 ? toTarget.clone().normalize() : new THREE.Vector3(0, 0, 1);
-
-      if (enemy.isBoss) {
-        if (enemy.state === 'pattern_windup') {
-          enemy.stateTimer -= dt;
-          enemy.warnMat.opacity = 0.45;
-          if (enemy.stateTimer <= 0) {
-            enemy.warnMat.opacity = 0;
-            this.executeBossPattern(enemy, pPos);
-          }
-          continue;
-        }
-
-        if (enemy.state === 'dash') {
-          enemy.stateTimer -= dt;
-          const nx = enemy.root.position.x + enemy.dashVel.x * speedMult;
-          const nz = enemy.root.position.z + enemy.dashVel.z * speedMult;
-          if (!this.world.isBlockedForEntity(nx, nz, 0.5 * enemy.scale)) {
-            enemy.root.position.set(nx, 0, nz);
-          }
-          if (enemy.root.position.distanceTo(pPos) < 1.8 * enemy.scale) {
-            player.receiveEnemyAttack(Math.round(enemy.atk * 1.5), enemy.root.position);
-          }
-          if (enemy.stateTimer <= 0) enemy.state = 'chase';
-          continue;
-        }
-
-        if (dist <= 28) {
-          enemy.patternTimer -= dt;
-          if (enemy.patternTimer <= 0) {
-            enemy.patternTimer = enemy.enraged ? 1.4 : 2.2;
-            this.beginBossPatternWindup(enemy);
-            continue;
-          }
-        }
-      }
-
-      const aggroRange = enemy.isBoss ? 26 : 22;
-      if (dist > aggroRange && enemy.state === 'idle') continue;
-
-      if (enemy.state === 'idle' || enemy.state === 'chase') {
-        enemy.state = 'chase';
-        enemy.root.rotation.y = Math.atan2(dir.x, dir.z);
-
-        const stopDist = enemy.ranged ? 9.0 : enemy.atkRange * 0.85;
-        if (dist > stopDist) {
-          const nextX = enemy.root.position.x + dir.x * enemy.speed * speedMult;
-          const nextZ = enemy.root.position.z + dir.z * enemy.speed * speedMult;
-          if (!this.world.isBlockedForEntity(nextX, enemy.root.position.z, 0.5 * enemy.scale)) {
-            enemy.root.position.x = nextX;
-          }
-          if (!this.world.isBlockedForEntity(enemy.root.position.x, nextZ, 0.5 * enemy.scale)) {
-            enemy.root.position.z = nextZ;
-          }
-        } else {
-          enemy.state = 'windup';
-          enemy.stateTimer = (enemy.isBoss ? 0.65 : 0.55) * (enemy.enraged ? 0.7 : 1.0);
-        }
-      } else if (enemy.state === 'windup') {
-        enemy.stateTimer -= dt;
-        const progress = 1 - Math.max(0, enemy.stateTimer / 0.65);
-        enemy.warnMat.opacity = 0.2 + progress * 0.65;
-        enemy.warnRing.scale.setScalar(0.5 + progress * 0.5);
-
-        if (enemy.stateTimer <= 0) {
-          enemy.warnMat.opacity = 0;
-          enemy.state = 'cooldown';
-          enemy.stateTimer = enemy.isBoss ? (enemy.enraged ? 0.8 : 1.1) : 1.3;
-
-          if (enemy.ranged) {
-            this.fireEnemyOrb(enemy, dir, 0.22);
-          } else if (dist <= enemy.atkRange + 0.6) {
-            player.receiveEnemyAttack(enemy.atk, enemy.root.position);
-          }
-        }
-      } else if (enemy.state === 'cooldown') {
-        enemy.stateTimer -= dt;
-        if (enemy.stateTimer <= 0) enemy.state = 'chase';
+      if (enemy.isRivalAgent) {
+        this.updateRivalAgent(enemy, dt, player);
       }
     }
 
+    // エフェクト更新
+    this.fxMeshes = this.fxMeshes.filter((fx) => {
+      fx.life -= dt;
+      if (fx.mesh.material) {
+        fx.mesh.material.opacity = Math.max(0, (fx.life / fx.maxLife) * 0.85);
+      }
+      if (fx.life <= 0) {
+        this.scene.remove(fx.mesh);
+        return false;
+      }
+      return true;
+    });
+
+    // AI射撃弾の更新
     this.enemyProjectiles = this.enemyProjectiles.filter((p) => {
       p.life -= dt;
       if (p.homing) {
-        const target = pPos.clone().add(new THREE.Vector3(0, 1.0, 0));
+        const target = pPos.clone().add(new THREE.Vector3(0, 1.1, 0));
         const toT = target.sub(p.mesh.position).normalize();
         const spd = p.vel.length();
-        p.vel.lerp(toT.multiplyScalar(spd), 0.06).normalize().multiplyScalar(spd);
+        p.vel.lerp(toT.multiplyScalar(spd), 0.085).normalize().multiplyScalar(spd);
       }
       p.mesh.position.add(p.vel);
 
-      const dPlayer = p.mesh.position.distanceTo(pPos.clone().add(new THREE.Vector3(0, 1.0, 0)));
-      if (dPlayer < 0.85) {
+      const dPlayer = p.mesh.position.distanceTo(pPos.clone().add(new THREE.Vector3(0, 1.1, 0)));
+      if (dPlayer < (p.isExplosive ? 2.4 : 0.85)) {
+        if (p.isExplosive) {
+          this.world.spawnHitSpark(p.mesh.position, 0xff4500);
+        }
         player.receiveEnemyAttack(p.atk, p.mesh.position);
         this.scene.remove(p.mesh);
         return false;
       }
 
-      if (p.life <= 0 || this.world.isBlockedForEntity(p.mesh.position.x, p.mesh.position.z, 0.25)) {
+      if (p.life <= 0 || this.world.isBlockedForEntity(p.mesh.position.x, p.mesh.position.z, 0.25, p.mesh.position.y - 1.0)) {
+        if (p.isExplosive) {
+          this.world.spawnHitSpark(p.mesh.position, 0xff4500);
+          if (p.mesh.position.distanceTo(pPos) <= 3.5) {
+            player.receiveEnemyAttack(Math.round(p.atk * 0.7), p.mesh.position);
+          }
+        }
         this.scene.remove(p.mesh);
         return false;
       }
