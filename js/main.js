@@ -10,26 +10,26 @@ import {
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0d12);
-scene.fog = new THREE.FogExp2(0x0b0d12, 0.018);
+scene.fog = new THREE.FogExp2(0x0b0d12, 0.012);
 
-const hemiLight = new THREE.HemisphereLight(0xa0c4ff, 0x2d3748, 1.4);
+const hemiLight = new THREE.HemisphereLight(0xa0c4ff, 0x2d3748, 1.45);
 scene.add(hemiLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.6);
-dirLight.position.set(25, 45, 25);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.65);
+dirLight.position.set(35, 55, 35);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 2048;
 dirLight.shadow.mapSize.height = 2048;
 dirLight.shadow.camera.near = 1;
-dirLight.shadow.camera.far = 150;
-const d = 50;
+dirLight.shadow.camera.far = 180;
+const d = 65;
 dirLight.shadow.camera.left = -d;
 dirLight.shadow.camera.right = d;
 dirLight.shadow.camera.top = d;
 dirLight.shadow.camera.bottom = -d;
 scene.add(dirLight);
 
-const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 240);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -43,11 +43,8 @@ window.addEventListener('resize', () => {
 });
 
 window.addEventListener('warp-floor', (e) => {
-  if (typeof e.detail === 'object' && e.detail !== null) {
-    enterFloor(e.detail.floor, !!e.detail.isBoss);
-  } else {
-    enterFloor(e.detail, false);
-  }
+  const target = (typeof e.detail === 'object' && e.detail !== null) ? e.detail.floor : e.detail;
+  enterFloor(target);
 });
 
 const toastContainer = document.getElementById('toast-container');
@@ -56,7 +53,7 @@ function showToast(msg) {
   el.className = 'toast-msg';
   el.textContent = msg;
   toastContainer.appendChild(el);
-  setTimeout(() => el.remove(), 1400);
+  setTimeout(() => el.remove(), 1600);
 }
 
 const damageLayer = document.getElementById('damage-layer');
@@ -77,7 +74,6 @@ function spawnDamagePopup(worldPos, dmg, isCrit = false) {
 }
 
 let currentFloor = 0;
-let isBossStage = false;
 let slowMoUntil = 0;
 
 const world = new World(scene, showToast);
@@ -88,19 +84,17 @@ const player = new Player(scene, camera, world, enemyManager, {
   onToast: showToast,
   onNextFloor: () => {
     if (currentFloor === 0) {
-      const startDungeonFloor = Math.max(1, (SAVE.cleared || 0) + 1);
-      enterFloor(startDungeonFloor, false);
-    } else if (!isBossStage) {
-      enterFloor(currentFloor, true);
+      const nextRank = Math.max(1, (SAVE.cleared || 0) + 1);
+      enterFloor(nextRank);
     } else {
-      enterFloor(currentFloor + 1, false);
+      enterFloor(currentFloor + 1);
     }
   },
   onBailout: () => {
     PLAYER.pts = 0;
     saveGame();
     showToast('📡 トリオン限界値到達！緊急脱出（ベイルアウト）で基地へ帰還');
-    enterFloor(0, false);
+    enterFloor(0);
   },
   onSlowMo: (sec) => { slowMoUntil = performance.now() + sec * 1000; },
   isUiOpen: () => uiManager ? uiManager.isOpen() : false
@@ -108,20 +102,20 @@ const player = new Player(scene, camera, world, enemyManager, {
 
 uiManager = new UIManager(player, world, enemyManager, showToast);
 
-function enterFloor(floor, bossFlag = false) {
+function enterFloor(floor) {
   currentFloor = floor;
-  isBossStage = bossFlag;
-
-  const layout = world.buildFloor(floor, isBossStage);
+  const layout = world.buildFloor(floor);
   player.root.position.copy(layout.playerStart);
   player.velocityY = 0;
 
-  enemyManager.spawnForFloor(floor, layout.spawnPoints, layout.bossPoint, isBossStage, layout.bossRoomCorners);
-  showToast(floor === 0 ? '🏢 0F ボーダー本部基地' : isBossStage ? `⚠️ 防衛エリア ${floor}.5F 強敵反応検知！` : `⚔️ 防衛エリア ${floor}F 転送完了`);
+  enemyManager.spawnForFloor(floor, layout.rivalStart);
+  if (floor === 0) {
+    showToast('🏢 0F ボーダー本部基地');
+  }
   saveGame();
 }
 
-enterFloor(currentFloor, false);
+enterFloor(currentFloor);
 
 // PointerLock
 const overlay = document.getElementById('lock-overlay');
@@ -174,40 +168,19 @@ function updateHud(now) {
   const mTrion = maxTrion();
   if (player.trion > mTrion) player.trion = mTrion;
 
-  floorSpan.textContent = currentFloor === 0 ? '0 (ボーダー本部基地)' : isBossStage ? `${currentFloor}.5F (強敵戦)` : `${currentFloor}F`;
+  floorSpan.textContent = currentFloor === 0 ? '0 (ボーダー本部基地)' : `Rank.${currentFloor} 市街地模擬戦`;
   enemyCountSpan.textContent = enemyManager.enemies.length;
 
   const boss = enemyManager.activeBoss;
-  const extraHud = document.getElementById('boss-extra-hud');
-  const weakBadge = document.getElementById('boss-weak-badge');
-  const subWrap = document.getElementById('boss-sub-bar-wrap');
-  const subBar = document.getElementById('boss-sub-bar');
-  const subText = document.getElementById('boss-sub-text');
-
   if (boss && boss.hp > 0) {
     bossHud.classList.remove('hidden');
     bossNameSpan.textContent = boss.name;
     bossHpBar.style.width = `${(boss.hp / boss.maxHp) * 100}%`;
-    bossHpText.textContent = `${boss.hp.toLocaleString()} / ${boss.maxHp.toLocaleString()}`;
-
-    if (extraHud) {
-      if (boss.hasAdaptiveArmor) {
-        extraHud.classList.remove('hidden');
-        weakBadge.classList.remove('hidden');
-        const wLabel = { melee: '⚔️ 有効: 近接', ranged: '🔫 有効: 射撃', skill: '💠 有効: スキル' }[boss.weakness];
-        weakBadge.textContent = boss.isAdaptiveBroken ? '💥 ARMOR BREAK!' : wLabel;
-        subWrap.classList.remove('hidden');
-        subBar.style.width = `${boss.breakGauge}%`;
-        subText.textContent = `装甲ブレイク ${Math.floor(boss.breakGauge)}%`;
-      } else {
-        extraHud.classList.add('hidden');
-      }
-    }
+    bossHpText.textContent = `TRION ${boss.hp.toLocaleString()} / ${boss.maxHp.toLocaleString()}`;
   } else {
     bossHud.classList.add('hidden');
   }
 
-  // 基地施設・転送ゲートの接近プロンプト
   const nearbyItem = world.getNearbyInteractable(player.root.position);
   const distPortal = Math.hypot(
     player.root.position.x - world.portalPos.x,
@@ -219,8 +192,8 @@ function updateHud(now) {
   } else if (distPortal <= 2.8) {
     interactPrompt.classList.remove('hidden');
     interactPrompt.textContent = currentFloor === 0
-      ? '[F] 防衛エリアへ出撃する'
-      : world.portalLocked ? '🔒 目標撃破でロック解除' : '[F] 次のエリアへ転送';
+      ? '[F] 市街地ランク模擬戦へ転送'
+      : world.portalLocked ? '🔒 対戦相手のベイルアウトで解除' : '[F] 次のランク模擬戦へ進む';
   } else {
     interactPrompt.classList.add('hidden');
   }
@@ -245,7 +218,6 @@ function updateHud(now) {
   cdDodge.textContent = dodgeLeft > 0 ? `${(dodgeLeft / 1000).toFixed(1)}s` : 'READY';
   cdDodge.style.color = dodgeLeft > 0 ? '#ffd36a' : '#48bb78';
 
-  // Eスロット表示
   nameSkill.textContent = eTrig ? eTrig.name : '未セット';
   if (!eTrig) {
     cdSkill.textContent = '-';
@@ -256,7 +228,6 @@ function updateHud(now) {
     cdSkill.style.color = skillLeft > 0 ? '#ffd36a' : '#48bb78';
   }
 
-  // Qスロット表示
   nameQ.textContent = qTrig ? qTrig.name : '未セット';
   if (!qTrig) {
     cdQ.textContent = '-';
@@ -267,7 +238,6 @@ function updateHud(now) {
     cdQ.style.color = qLeft > 0 ? '#ffd36a' : '#48bb78';
   }
 
-  // 1・2・3オプショナルスロット表示
   const optKeys = ['opt1', 'opt2', 'opt3'];
   for (let i = 0; i < 3; i++) {
     const sl = TRIGGER_SLOTS[optKeys[i]] ? TRIGGER_LIST[TRIGGER_SLOTS[optKeys[i]]] : null;
@@ -283,7 +253,6 @@ function updateHud(now) {
     }
   }
 
-  // Z (EXS) スロット表示
   nameExs.textContent = zTrig ? zTrig.name : 'EXS';
   cdExs.textContent = state.exsGauge >= EXS_GAUGE_MAX ? 'READY!!' : `${Math.floor(state.exsGauge)}%`;
   cdExs.style.color = state.exsGauge >= EXS_GAUGE_MAX ? '#00ffff' : '#a0aec0';
@@ -316,7 +285,7 @@ function animate() {
 
   if (!uiManager.isOpen()) {
     const worldDt = now < slowMoUntil ? dt * 0.25 : dt;
-    world.update(worldDt);
+    world.update(worldDt, player);
     enemyManager.update(worldDt, player);
     player.update(dt);
   }
