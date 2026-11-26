@@ -1017,6 +1017,7 @@ export class Player {
       const testPos = focus.clone().addScaledVector(dir, d);
       let blocked = false;
       for (const wall of this.world.walls) {
+        if (wall.material?.transparent) continue;
         const hx = wall.userData.halfX || 1.0;
         const hy = wall.userData.halfY || 1.0;
         const hz = wall.userData.halfZ || 1.0;
