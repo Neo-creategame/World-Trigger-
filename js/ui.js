@@ -520,6 +520,9 @@ export class UIManager {
   // ==========================================
   updateMinimap(currentFloor) {
     if (!this.minimapCtx) return;
+    this._mmTick = ((this._mmTick || 0) + 1) % 3;
+    if (this._mmTick !== 0 && this.lastFloor === currentFloor) return;
+    if (!this.minimapCtx) return;
     if (this.lastFloor !== currentFloor) {
       this.exploredSet.clear();
       this.lastFloor = currentFloor;
