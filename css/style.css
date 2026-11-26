@@ -1,0 +1,640 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+body {
+  overflow: hidden;
+  background: #0b0d12;
+  font-family: system-ui, "Hiragino Sans", "Yu Gothic", sans-serif;
+  color: #e8eaf0;
+}
+
+#crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.65;
+}
+#crosshair::before,
+#crosshair::after {
+  content: "";
+  position: absolute;
+  background: #00ffff;
+}
+#crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+#crosshair::after  { left: 0; top: 6px; width: 14px; height: 2px; }
+
+#damage-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 55;
+  overflow: hidden;
+}
+
+.dmg-popup {
+  position: absolute;
+  font-weight: bold;
+  font-size: 16px;
+  color: #fff;
+  text-shadow: 0 2px 4px #000;
+  transform: translate(-50%, -50%);
+  animation: dmgFloat 0.75s ease-out forwards;
+}
+.dmg-popup.crit {
+  font-size: 21px;
+  color: #00ffff;
+}
+@keyframes dmgFloat {
+  0%   { opacity: 1; transform: translate(-50%, -50%) scale(1.15); }
+  100% { opacity: 0; transform: translate(-50%, -130%) scale(0.95); }
+}
+
+.hud-panel {
+  background: rgba(14, 16, 21, 0.85);
+  border: 1px solid rgba(111, 182, 255, 0.35);
+  border-radius: 8px;
+  padding: 10px 14px;
+  z-index: 60;
+  backdrop-filter: blur(4px);
+}
+
+/* 中央上：階層＆ボスHPバー */
+#hud-top-center {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.floor-badge {
+  background: rgba(14, 16, 21, 0.88);
+  border: 1px solid #6fb6ff;
+  border-radius: 20px;
+  padding: 4px 18px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #6fb6ff;
+}
+
+#boss-hud {
+  width: 420px;
+  max-width: 85vw;
+  background: rgba(14, 16, 21, 0.9);
+  border: 1px solid #ff1144;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.boss-title {
+  font-size: 12px;
+  font-weight: bold;
+  color: #ff6b8b;
+  margin-bottom: 4px;
+  text-align: center;
+}
+.boss-bar-wrap {
+  position: relative;
+  height: 14px;
+  background: #1a202c;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.boss-hp-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #9b2c2c, #ff1144);
+  transition: width 0.1s ease-out;
+}
+
+#interact-prompt {
+  position: fixed;
+  bottom: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 255, 255, 0.18);
+  border: 1px solid #00ffff;
+  color: #00ffff;
+  padding: 6px 18px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: bold;
+  pointer-events: none;
+  z-index: 70;
+}
+
+/* 左上ステータス */
+#hud-top-left {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.lv-badge {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: #1a202c;
+  border: 2px solid #ffd36a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 13px;
+  color: #ffd36a;
+  flex-shrink: 0;
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 205px;
+}
+
+.bar-wrap {
+  position: relative;
+  height: 14px;
+  background: #1a202c;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.exp-wrap { height: 5px; }
+.special-wrap { height: 11px; }
+.hidden { display: none !important; }
+
+.bar-fill {
+  height: 100%;
+  width: 100%;
+  transition: width 0.12s ease-out;
+}
+.hp-fill { background: linear-gradient(90deg, #38a169, #68d391); }
+.exp-fill { background: #4299e1; width: 0%; }
+.special-fill { background: linear-gradient(90deg, #00b5d8, #00ffff); width: 0%; }
+
+.bar-label {
+  position: absolute;
+  inset: 0;
+  font-size: 10px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 1px 2px #000;
+}
+
+.stat-sub {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #cbd5e0;
+}
+.stat-sub b { color: #ffd36a; }
+
+/* 左下装備情報 */
+#hud-bottom-left {
+  position: fixed;
+  left: 16px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 230px;
+  font-size: 12px;
+  pointer-events: none;
+}
+.weapon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tag {
+  background: #2d3748;
+  color: #00ffff;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.sub-wep .tag, .potion-row .tag { color: #a0aec0; }
+.dur-text {
+  margin-left: auto;
+  font-size: 11px;
+  color: #7cf0a0;
+}
+
+/* 右上ミニマップ＆メニューショートカット */
+#hud-top-right-wrap {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 65;
+}
+#minimap-box {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: rgba(14, 16, 21, 0.9);
+  border: 2px solid #6fb6ff;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mini-info {
+  font-size: 11px;
+  text-align: right;
+  line-height: 1.5;
+}
+.status-text { color: #00ffff; font-weight: bold; }
+.menu-shortcuts {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.hud-btn {
+  background: #1e2636;
+  color: #e8eaf0;
+  border: 1px solid #6fb6ff;
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.hud-btn:hover { background: #2c3850; }
+
+/* 右下アクションスロット */
+#hud-bottom-right {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 60;
+}
+
+.skill-slot {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(14, 16, 21, 0.88);
+  border: 2px solid #4a5568;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.exs-slot {
+  width: 66px;
+  height: 66px;
+  border-color: #00ffff;
+}
+
+.key-hint {
+  position: absolute;
+  top: -16px;
+  font-size: 10px;
+  color: #a0aec0;
+  white-space: nowrap;
+}
+.slot-icon {
+  font-size: 11px;
+  font-weight: bold;
+  color: #fff;
+  text-align: center;
+  line-height: 1.1;
+}
+.slot-cd {
+  font-size: 10px;
+  font-weight: bold;
+  color: #48bb78;
+  margin-top: 2px;
+}
+
+/* モーダルウィンドウ（バッグ・町メニュー） */
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 14, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 120;
+}
+#modal-overlay.hidden {
+  display: none !important;
+}
+.modal-window {
+  width: 860px;
+  max-width: 95vw;
+  max-height: 88vh;
+  background: #141822;
+  border: 2px solid #6fb6ff;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
+  background: #1b2230;
+  border-bottom: 1px solid #2d3748;
+}
+.modal-header h2 { font-size: 16px; color: #00ffff; }
+.close-btn {
+  background: #2d3748;
+  color: #fff;
+  border: 1px solid #4a5568;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.ui-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 14px;
+}
+.ui-card {
+  background: #191f2c;
+  border: 1px solid #2d3748;
+  border-radius: 8px;
+  padding: 12px;
+}
+.ui-card h3 {
+  font-size: 13px;
+  color: #6fb6ff;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #2d3748;
+  padding-bottom: 4px;
+}
+.center-card { text-align: center; padding: 24px; line-height: 2; }
+.gold { color: #ffd36a; }
+.muted { color: #718096; font-size: 12px; }
+
+.stat-lines, .equip-list, .shop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.equip-row, .shop-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #131720;
+  padding: 5px 8px;
+  border-radius: 5px;
+}
+.synergy-box {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(0, 255, 255, 0.1);
+  border: 1px solid #00ffff;
+  border-radius: 5px;
+  font-size: 11px;
+  color: #00ffff;
+}
+
+.pack-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.pack-cell {
+  height: 54px;
+  background: #131720;
+  border: 1px solid #3a4559;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11px;
+  padding: 2px;
+  cursor: pointer;
+}
+.pack-cell.empty { color: #4a5568; cursor: default; }
+.pack-cell.selected { border-color: #00ffff; background: #1e2d3d; }
+.pack-cell.legend { border-color: #ffd36a; color: #ffd36a; }
+.pack-cell.boss { border-color: #b15cff; color: #d6bcfa; }
+
+.detail-panel {
+  margin-top: 10px;
+  padding: 8px;
+  background: #131720;
+  border-radius: 6px;
+  min-height: 68px;
+}
+.detail-text { font-size: 12px; margin-bottom: 8px; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.town-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tab-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab-btn {
+  background: #1e2636;
+  color: #cbd5e0;
+  border: 1px solid #3a4559;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.tab-btn.active {
+  background: #2b6cb0;
+  border-color: #00ffff;
+  color: #fff;
+  font-weight: bold;
+}
+
+.mini-btn, .act-btn {
+  background: #2d3748;
+  color: #fff;
+  border: 1px solid #4a5568;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.act-btn { padding: 6px 12px; font-size: 12px; }
+.mini-btn.primary, .act-btn.primary { background: #2b6cb0; border-color: #63b3ed; }
+.act-btn.danger { background: #9b2c2c; border-color: #fc8181; }
+
+/* 通知トースト */
+#toast-container {
+  position: fixed;
+  top: 105px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 150;
+}
+.toast-msg {
+  background: rgba(14, 16, 21, 0.92);
+  border: 1px solid #ffd36a;
+  color: #ffd36a;
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: bold;
+  animation: fadeUp 1.4s ease-out forwards;
+}
+@keyframes fadeUp {
+  0%   { opacity: 1; transform: translateY(0); }
+  70%  { opacity: 1; transform: translateY(-12px); }
+  100% { opacity: 0; transform: translateY(-24px); }
+}
+
+/* クリック開始オーバーレイ */
+#lock-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 13, 18, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  cursor: pointer;
+}
+
+.overlay-box {
+  background: #161b26;
+  border: 2px solid #00ffff;
+  border-radius: 12px;
+  padding: 28px 36px;
+  text-align: center;
+  line-height: 1.8;
+}
+.overlay-box h2 { color: #00ffff; margin-bottom: 10px; font-size: 20px; }
+.overlay-box p { font-size: 14px; }
+.overlay-box .sub-note { margin-top: 10px; font-size: 12px; color: #ffd36a; }
+/* ポーズメニュー用スタイル */
+.pause-menu-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+.pause-banner {
+  background: #2b3240;
+  color: #cbd5e0;
+  padding: 10px 24px;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+.pause-btn {
+  min-width: 240px;
+  background: #2b3240;
+  color: #e2e8f0;
+  border: 1px solid #3d4659;
+  border-radius: 4px;
+  padding: 10px 20px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pause-btn:hover {
+  background: #3a4457;
+  border-color: #6fb6ff;
+}
+.pause-btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.pause-floor-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 520px;
+  max-height: 160px;
+  overflow-y: auto;
+  background: #131720;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #2d3748;
+}
+/* ボス特殊ゲージ（弱点・ブレイク・業火） */
+.boss-extra-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+.weak-badge {
+  background: #2b6cb0;
+  border: 1px solid #00ffff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.boss-sub-wrap {
+  position: relative;
+  flex: 1;
+  height: 12px;
+  background: #1a202c;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.boss-sub-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #dd6b20, #ffd36a);
+  transition: width 0.1s ease-out;
+}
+.sb-slot {
+  width: 54px;
+  height: 54px;
+  border-color: #b15cff;
+}
