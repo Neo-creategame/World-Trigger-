@@ -21,11 +21,12 @@ export class World {
     this.portalPos = new THREE.Vector3();
     this.portalLocked = false;
 
-    this.wallTex = this.createGridTexture('#1e293b', '#334155');
-    this.floorSlabTex = this.createGridTexture('#263244', '#3b4d66');
-    this.buildingTex = this.createBuildingTexture('#273449', '#38bdf8');
-    this.roadTex = this.createGridTexture('#0f172a', '#1e2636');
-    this.boxTex = this.createGridTexture('#2c5282', '#63b3ed');
+    // ワールドトリガーの市街地・ボーダー訓練場風のクリーンな白・グレー・シアンテクスチャ
+    this.wallTex = this.createModernPanelTexture('#cbd5e1', '#94a3b8', '#0ea5e9');
+    this.floorSlabTex = this.createGridTexture('#475569', '#64748b');
+    this.buildingTex = this.createModernPanelTexture('#e2e8f0', '#94a3b8', '#38bdf8');
+    this.roadTex = this.createRoadTexture('#1e293b', '#334155');
+    this.boxTex = this.createGridTexture('#0284c7', '#7dd3fc');
   }
 
   createGridTexture(bg, line) {
@@ -36,7 +37,7 @@ export class World {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, 128, 128);
     ctx.strokeStyle = line;
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 3;
     ctx.strokeRect(2, 2, 124, 124);
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = THREE.RepeatWrapping;
@@ -44,24 +45,44 @@ export class World {
     return tex;
   }
 
-  createBuildingTexture(bg, windowColor) {
+  createModernPanelTexture(bg, line, accent) {
     const c = document.createElement('canvas');
     c.width = 128;
     c.height = 128;
     const ctx = c.getContext('2d');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, 128, 128);
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 4;
-    ctx.strokeRect(0, 0, 128, 128);
 
-    ctx.fillStyle = windowColor;
-    ctx.globalAlpha = 0.25;
-    for (let y = 16; y < 112; y += 28) {
-      for (let x = 14; x < 114; x += 26) {
-        ctx.fillRect(x, y, 16, 16);
-      }
-    }
+    // 建築パネル目地
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, 124, 124);
+    ctx.beginPath();
+    ctx.moveTo(0, 64);
+    ctx.lineTo(128, 64);
+    ctx.stroke();
+
+    // シアン（トリオン発光ライン）
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.45;
+    ctx.fillRect(6, 58, 116, 4);
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+  }
+
+  createRoadTexture(bg, line) {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, 126, 126);
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
@@ -94,7 +115,7 @@ export class World {
     this.clearDungeon();
 
     const floorMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(260, 260),
+      new THREE.PlaneGeometry(300, 300),
       new THREE.MeshStandardMaterial({ map: this.roadTex, roughness: 0.85 })
     );
     floorMesh.rotation.x = -Math.PI / 2;
@@ -108,7 +129,6 @@ export class World {
     return this.buildCityArena(floor);
   }
 
-  // 汎用ボックスパーツ追加（壁・床スラブ・柱・渡り廊下）
   addSolidBox(cx, cy, cz, w, h, d, mat, extraData = {}) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     mesh.position.set(cx, cy, cz);
@@ -127,219 +147,295 @@ export class World {
     return mesh;
   }
 
-  // ---- 中に入って戦える「大型複合ビル（複数階層・階段・屋上）」を生成 ----
-  buildEnterableBuilding(cx, cz, floors = 2, size = 18) {
-    const wallMat = new THREE.MeshStandardMaterial({ map: this.buildingTex, roughness: 0.65 });
-    const floorMat = new THREE.MeshStandardMaterial({ map: this.floorSlabTex, roughness: 0.75 });
-    const stairMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.6 });
+  // ---- 折り返し階段（踊り場付き・ワートリビル仕様）を生成 ----
+  // baseY から baseY + floorH まで、前半フライト → 中2階踊り場 → 後半フライトで折り返して登る
+  buildSwitchbackStaircase(cx, cz, baseY, floorH, stairMat, railMat) {
+    const totalW = 6.2;      // 階段ユニット全体の横幅（往路3.0 + 復路3.0 + 中央仕切り0.2）
+    const flightW = 2.8;     // 片側階段の有効幅（すれ違い・戦闘できる広さ）
+    const totalLen = 11.0;   // 階段ユニット全体の奥行き
+    const landingD = 3.0;    // 踊り場の奥行き
+    const runLen = totalLen - landingD; // 傾斜部分の長さ (8.0m)
+    const midY = baseY + floorH * 0.5;
 
-    const floorH = 4.2;     // 1フロアの天井高（ジャンプやカメラに余裕を持たせる）
-    const slabThick = 0.45; // 床の厚み
-    const wallThick = 0.7;  // 外壁の厚み
+    // 1. 中2階踊り場（北側奥）
+    const landingZ = cz - totalLen / 2 + landingD / 2;
+    this.addSolidBox(cx, midY - 0.2, landingZ, totalW, 0.4, landingD, stairMat);
+    // 踊り場の奥壁（転落防止）
+    this.addSolidBox(cx, midY + 0.6, cz - totalLen / 2 - 0.15, totalW, 1.4, 0.3, railMat);
+
+    // 2. 前半階段（左側レーン：手前南側から奥北側の踊り場へ登る）
+    const leftX = cx - totalW / 2 + flightW / 2;
+    const steps1 = 10;
+    const stepH1 = (floorH * 0.5) / steps1;
+    const stepD1 = runLen / steps1;
+    const startZ1 = cz + totalLen / 2; // 南端
+
+    for (let i = 0; i < steps1; i++) {
+      const topY = baseY + stepH1 * (i + 1);
+      const sz = startZ1 - stepD1 * (i + 0.5);
+      // 薄い踏み板スラブとして配置（下をくぐれるリアルな階段構造）
+      this.addSolidBox(leftX, topY - 0.18, sz, flightW, 0.36, stepD1 + 0.22, stairMat);
+    }
+
+    // 3. 後半階段（右側レーン：奥北側の踊り場から手前南側の上階フロアへ登る）
+    const rightX = cx + totalW / 2 - flightW / 2;
+    const steps2 = 10;
+    const stepH2 = (floorH * 0.5) / steps2;
+    const stepD2 = runLen / steps2;
+    const startZ2 = cz - totalLen / 2 + landingD; // 踊り場端
+
+    for (let i = 0; i < steps2; i++) {
+      const topY = midY + stepH2 * (i + 1);
+      const sz = startZ2 + stepD2 * (i + 0.5);
+      this.addSolidBox(rightX, topY - 0.18, sz, flightW, 0.36, stepD2 + 0.22, stairMat);
+    }
+
+    // 4. 中央の腰壁（手すり：撃ち合いの遮蔽物になる）
+    this.addSolidBox(cx, baseY + floorH * 0.55, cz + 0.8, 0.28, floorH * 0.85, runLen, railMat);
+  }
+
+  // ---- 中央吹き抜けの商業モール風「緩やかエスカレーター・スロープ」 ----
+  buildMallEscalator(cx, cz, baseY, floorH, dirZ, stairMat, glassRailMat) {
+    const width = 3.2;
+    const length = 11.5;
+    const steps = 16;
+    const stepH = floorH / steps;
+    const stepD = length / steps;
+
+    for (let i = 0; i < steps; i++) {
+      const topY = baseY + stepH * (i + 1);
+      const offsetZ = (-length / 2 + stepD * (i + 0.5)) * dirZ;
+      this.addSolidBox(cx, topY - 0.18, cz + offsetZ, width, 0.36, stepD + 0.25, stairMat);
+    }
+
+    // 左右にガラス手すり（射撃を通す／遮蔽になる段差手すり）
+    [-1, 1].forEach((side) => {
+      const rx = cx + side * (width / 2 + 0.15);
+      for (let i = 0; i < 4; i++) {
+        const segY = baseY + floorH * ((i + 0.5) / 4) + 0.55;
+        const segZ = cz + ((-length / 2) + (length * (i + 0.5)) / 4) * dirZ;
+        this.addSolidBox(rx, segY, segZ, 0.22, 1.0, length / 4, glassRailMat);
+      }
+    });
+  }
+
+  // ---- ワールドトリガー風 大型商業・オフィスビル（高天井 6.5m ＆ 折り返し階段＆吹き抜け） ----
+  buildEnterableBuilding(cx, cz, floors = 2, size = 24, isCentralMall = false) {
+    const wallMat = new THREE.MeshStandardMaterial({ map: this.buildingTex, roughness: 0.55 });
+    const floorMat = new THREE.MeshStandardMaterial({ map: this.floorSlabTex, roughness: 0.7 });
+    const stairMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5 });
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4 });
+    const glassRailMat = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.42,
+      roughness: 0.2
+    });
+
+    const floorH = 6.5;     // 天井高 6.5m（グラスホッパー・空中戦が余裕でできる高さ）
+    const slabThick = 0.5;
+    const wallThick = 0.75;
     const halfS = size / 2;
-    const doorW = 4.4;      // 出入り口の広さ
+    const doorW = 5.6;      // 広いエントランス開口
 
     for (let f = 0; f < floors; f++) {
       const baseY = f * floorH;
       const wallCenterY = baseY + floorH / 2;
       const wallH = floorH - slabThick;
 
-      // 2階以上の床スラブ（階段用の吹き抜け開口を東側に確保）
+      // 2階以上の床スラブ（吹き抜け・階段用の大きな開口を確保）
       if (f > 0) {
-        const stairWellW = 4.6;
-        const mainSlabW = size - stairWellW;
-        // メインフロア床
-        this.addSolidBox(
-          cx - stairWellW / 2,
-          baseY - slabThick / 2,
-          cz,
-          mainSlabW,
-          slabThick,
-          size,
-          floorMat
-        );
-        // 吹き抜けの北側・南側の踊り場床
-        this.addSolidBox(
-          cx + halfS - stairWellW / 2,
-          baseY - slabThick / 2,
-          cz - halfS + 2.5,
-          stairWellW,
-          slabThick,
-          5.0,
-          floorMat
-        );
-        this.addSolidBox(
-          cx + halfS - stairWellW / 2,
-          baseY - slabThick / 2,
-          cz + halfS - 2.5,
-          stairWellW,
-          slabThick,
-          5.0,
-          floorMat
-        );
+        if (isCentralMall) {
+          // 中央ショッピングモール：中央が巨大な吹き抜けアトリウム（ロの字型フロア）
+          const rimW = 7.5;
+          // 北・南の床
+          this.addSolidBox(cx, baseY - slabThick / 2, cz - halfS + rimW / 2, size, slabThick, rimW, floorMat);
+          this.addSolidBox(cx, baseY - slabThick / 2, cz + halfS - rimW / 2, size, slabThick, rimW, floorMat);
+          // 西・東の床
+          this.addSolidBox(cx - halfS + rimW / 2, baseY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
+          this.addSolidBox(cx + halfS - rimW / 2, baseY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
+
+          // 吹き抜けの手すり（2階・3階から1階を見下ろして狙撃できるガラス柵）
+          const atriumHalf = halfS - rimW;
+          this.addSolidBox(cx, baseY + 0.55, cz - atriumHalf, atriumHalf * 2, 1.1, 0.25, glassRailMat);
+          this.addSolidBox(cx, baseY + 0.55, cz + atriumHalf, atriumHalf * 2, 1.1, 0.25, glassRailMat);
+          this.addSolidBox(cx - atriumHalf, baseY + 0.55, cz, 0.25, 1.1, atriumHalf * 2, glassRailMat);
+          this.addSolidBox(cx + atriumHalf, baseY + 0.55, cz, 0.25, 1.1, atriumHalf * 2, glassRailMat);
+        } else {
+          // 通常大型ビル：東側に階段吹き抜け開口（幅 7.2m）を残した広いフロア
+          const stairWellW = 7.2;
+          const mainSlabW = size - stairWellW;
+          this.addSolidBox(cx - stairWellW / 2, baseY - slabThick / 2, cz, mainSlabW, slabThick, size, floorMat);
+          // 階段吹き抜けの北端・南端の踊り場床
+          this.addSolidBox(cx + halfS - stairWellW / 2, baseY - slabThick / 2, cz - halfS + 3.2, stairWellW, slabThick, 6.4, floorMat);
+          this.addSolidBox(cx + halfS - stairWellW / 2, baseY - slabThick / 2, cz + halfS - 3.2, stairWellW, slabThick, 6.4, floorMat);
+          // 吹き抜け側の転落防止ガラス手すり
+          this.addSolidBox(cx + halfS - stairWellW, baseY + 0.55, cz, 0.25, 1.1, size - 12.8, glassRailMat);
+        }
       }
 
-      // 外壁（1階は4方向すべてに広い出入り口を開ける / 2階以上は窓開口＋一部破壊可能ガラス壁）
+      // 外壁（1階は4方向すべて広い出入り口 / 2階以上はガラス窓＋バルコニー開口）
       const sideSeg = (size - doorW) / 2;
 
-      // 北壁・南壁（中央に出入り口 or バルコニー開口）
       [-1, 1].forEach((zSign) => {
         const wz = cz + zSign * (halfS - wallThick / 2);
         this.addSolidBox(cx - halfS + sideSeg / 2, wallCenterY, wz, sideSeg, wallH, wallThick, wallMat);
         this.addSolidBox(cx + halfS - sideSeg / 2, wallCenterY, wz, sideSeg, wallH, wallThick, wallMat);
+        // 上部垂れ壁
+        this.addSolidBox(cx, baseY + wallH - 0.75, wz, doorW, 1.5, wallThick, wallMat);
 
-        // 出入り口の上部垂れ壁（梁）
-        this.addSolidBox(cx, baseY + wallH - 0.5, wz, doorW, 1.0, wallThick, wallMat);
-
-        // 2階以上は腰壁（落下防止＆遮蔽物）を設置
         if (f > 0) {
-          this.addSolidBox(cx, baseY + 0.55, wz, doorW, 1.1, wallThick * 0.8, floorMat);
+          this.addSolidBox(cx, baseY + 0.55, wz, doorW, 1.1, wallThick * 0.8, glassRailMat);
         }
       });
 
-      // 西壁・東壁
       [-1, 1].forEach((xSign) => {
         const wx = cx + xSign * (halfS - wallThick / 2);
         if (f === 0) {
-          // 1階は東西にも出入り口を開放（4方向から突入・離脱可能）
           this.addSolidBox(wx, wallCenterY, cz - halfS + sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
           this.addSolidBox(wx, wallCenterY, cz + halfS - sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
-          this.addSolidBox(wx, baseY + wallH - 0.5, cz, wallThick, 1.0, doorW, wallMat);
+          this.addSolidBox(wx, baseY + wallH - 0.75, cz, wallThick, 1.5, doorW, wallMat);
         } else {
-          // 2階以上は左右壁＋中央に破壊可能なガラス窓壁（メテオラや旋空で吹き飛ばせる）
           this.addSolidBox(wx, wallCenterY, cz - halfS + sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
           this.addSolidBox(wx, wallCenterY, cz + halfS - sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
-          this.addDestructibleBlock(wx, baseY + 1.1, cz - 1.0, 0x38bdf8, 45);
-          this.addDestructibleBlock(wx, baseY + 1.1, cz + 1.0, 0x38bdf8, 45);
+          // 2階以上の東西窓は破壊可能な強化ガラスパネル（旋空やメテオラで割り入って突入可能）
+          this.addDestructibleBlock(wx, baseY + 1.2, cz - 1.2, 0x38bdf8, 45);
+          this.addDestructibleBlock(wx, baseY + 1.2, cz + 1.2, 0x38bdf8, 45);
         }
       });
 
-      // 室内柱と戦術用カバーオブジェクト
-      this.addSolidBox(cx - 3.2, wallCenterY, cz - 3.2, 1.1, wallH, 1.1, wallMat);
-      this.addSolidBox(cx - 3.2, wallCenterY, cz + 3.2, 1.1, wallH, 1.1, wallMat);
-      if (f === 0) {
-        this.addDestructibleBlock(cx - 1.2, HALF, cz, 0x4fd1c5, 50);
+      // 室内の構造柱（遮蔽物）
+      const colOff = isCentralMall ? 8.5 : 4.5;
+      this.addSolidBox(cx - colOff, wallCenterY, cz - colOff, 1.3, wallH, 1.3, wallMat);
+      this.addSolidBox(cx - colOff, wallCenterY, cz + colOff, 1.3, wallH, 1.3, wallMat);
+      if (isCentralMall) {
+        this.addSolidBox(cx + colOff, wallCenterY, cz - colOff, 1.3, wallH, 1.3, wallMat);
+        this.addSolidBox(cx + colOff, wallCenterY, cz + colOff, 1.3, wallH, 1.3, wallMat);
       }
 
-      // 上の階（または屋上）へ登る内階段（東側の吹き抜け空間に配置）
-      const stairX = cx + halfS - 2.3;
-      const steps = 8;
-      const stepH = floorH / steps;
-      const stepD = (size - 8.0) / steps;
-      const stairStartZ = cz - (size - 8.0) / 2;
-
-      for (let s = 0; s < steps; s++) {
-        const sh = stepH * (s + 1);
-        const sz = stairStartZ + stepD * (s + 0.5);
-        this.addSolidBox(stairX, baseY + sh / 2, sz, 2.6, sh, stepD + 0.15, stairMat);
+      // 階段配置（中央モールは吹き抜けエスカレーター / 通常ビルは折り返し階段）
+      if (isCentralMall) {
+        const escDir = f % 2 === 0 ? 1 : -1;
+        this.buildMallEscalator(cx - 4.2, cz, baseY, floorH, escDir, stairMat, glassRailMat);
+        this.buildMallEscalator(cx + 4.2, cz, baseY, floorH, -escDir, stairMat, glassRailMat);
+      } else {
+        const stairCenterX = cx + halfS - 3.6;
+        this.buildSwitchbackStaircase(stairCenterX, cz, baseY, floorH, stairMat, railMat);
       }
     }
 
-    // 屋上スラブ（階段の出口部分だけ吹き抜け開口を残す）
+    // 屋上スラブ
     const roofY = floors * floorH;
-    const stairWellW = 4.6;
-    const mainRoofW = size - stairWellW;
-    this.addSolidBox(cx - stairWellW / 2, roofY - slabThick / 2, cz, mainRoofW, slabThick, size, floorMat);
-    this.addSolidBox(cx + halfS - stairWellW / 2, roofY - slabThick / 2, cz - halfS + 2.5, stairWellW, slabThick, 5.0, floorMat);
-    this.addSolidBox(cx + halfS - stairWellW / 2, roofY - slabThick / 2, cz + halfS - 2.5, stairWellW, slabThick, 5.0, floorMat);
+    if (isCentralMall) {
+      const rimW = 7.5;
+      this.addSolidBox(cx, roofY - slabThick / 2, cz - halfS + rimW / 2, size, slabThick, rimW, floorMat);
+      this.addSolidBox(cx, roofY - slabThick / 2, cz + halfS - rimW / 2, size, slabThick, rimW, floorMat);
+      this.addSolidBox(cx - halfS + rimW / 2, roofY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
+      this.addSolidBox(cx + halfS - rimW / 2, roofY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
+    } else {
+      const stairWellW = 7.2;
+      const mainRoofW = size - stairWellW;
+      this.addSolidBox(cx - stairWellW / 2, roofY - slabThick / 2, cz, mainRoofW, slabThick, size, floorMat);
+      this.addSolidBox(cx + halfS - stairWellW / 2, roofY - slabThick / 2, cz - halfS + 3.2, stairWellW, slabThick, 6.4, floorMat);
+      this.addSolidBox(cx + halfS - stairWellW / 2, roofY - slabThick / 2, cz + halfS - 3.2, stairWellW, slabThick, 6.4, floorMat);
+    }
 
-    // 屋上の外周パラペット（狙撃手用の低い遮蔽壁）
-    const paraH = 1.05;
+    // 屋上の外周パラペット（狙撃戦用の胸壁）
+    const paraH = 1.15;
     this.addSolidBox(cx, roofY + paraH / 2, cz - halfS + 0.35, size, paraH, 0.7, wallMat);
     this.addSolidBox(cx, roofY + paraH / 2, cz + halfS - 0.35, size, paraH, 0.7, wallMat);
     this.addSolidBox(cx - halfS + 0.35, roofY + paraH / 2, cz, 0.7, paraH, size - 1.4, wallMat);
     this.addSolidBox(cx + halfS - 0.35, roofY + paraH / 2, cz, 0.7, paraH, size - 1.4, wallMat);
 
-    // 屋上の空調設備（スナイパー・シューター用の遮蔽物）
-    this.addDestructibleBlock(cx - 3.5, roofY + HALF, cz - 3.5, 0x63b3ed, 55);
-    this.addDestructibleBlock(cx - 3.5, roofY + HALF, cz + 3.5, 0x63b3ed, 55);
+    // 屋上の空調室外機ユニット（遮蔽カバー）
+    this.addSolidBox(cx - halfS + 3.5, roofY + 1.1, cz - halfS + 3.5, 2.8, 2.2, 2.2, railMat);
+    this.addDestructibleBlock(cx - halfS + 3.5, roofY + HALF, cz + halfS - 3.5, 0x38bdf8, 55);
   }
 
-  // 隣り合う大型ビル同士を2階の高さで繋ぐ渡り廊下（スカイブリッジ）
+  // 隣り合う大型ビル同士を2階の高さ（6.5m）で繋ぐ空中渡り廊下
   buildSkyBridge(x1, z1, x2, z2, floorLevel = 1) {
-    const floorH = 4.2;
-    const bridgeY = floorLevel * floorH - 0.22;
+    const floorH = 6.5;
+    const bridgeY = floorLevel * floorH - 0.25;
     const midX = (x1 + x2) / 2;
     const midZ = (z1 + z2) / 2;
     const bridgeMat = new THREE.MeshStandardMaterial({ map: this.floorSlabTex, roughness: 0.6 });
-    const railMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45 });
+    const glassRailMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45 });
 
     if (Math.abs(x1 - x2) > Math.abs(z1 - z2)) {
-      const span = Math.abs(x1 - x2) - 17.5;
+      const span = Math.abs(x1 - x2) - 23.5;
       if (span <= 1) return;
-      this.addSolidBox(midX, bridgeY, midZ, span, 0.45, 3.8, bridgeMat);
-      this.addSolidBox(midX, bridgeY + 0.75, midZ - 1.75, span, 1.1, 0.25, railMat);
-      this.addSolidBox(midX, bridgeY + 0.75, midZ + 1.75, span, 1.1, 0.25, railMat);
+      this.addSolidBox(midX, bridgeY, midZ, span, 0.5, 4.4, bridgeMat);
+      this.addSolidBox(midX, bridgeY + 0.85, midZ - 2.05, span, 1.2, 0.25, glassRailMat);
+      this.addSolidBox(midX, bridgeY + 0.85, midZ + 2.05, span, 1.2, 0.25, glassRailMat);
     } else {
-      const span = Math.abs(z1 - z2) - 17.5;
+      const span = Math.abs(z1 - z2) - 23.5;
       if (span <= 1) return;
-      this.addSolidBox(midX, bridgeY, midZ, 3.8, 0.45, span, bridgeMat);
-      this.addSolidBox(midX - 1.75, bridgeY + 0.75, midZ, 0.25, 1.1, span, railMat);
-      this.addSolidBox(midX + 1.75, bridgeY + 0.75, midZ, 0.25, 1.1, span, railMat);
+      this.addSolidBox(midX, bridgeY, midZ, 4.4, 0.5, span, bridgeMat);
+      this.addSolidBox(midX - 2.05, bridgeY + 0.85, midZ, 0.25, 1.2, span, glassRailMat);
+      this.addSolidBox(midX + 2.05, bridgeY + 0.85, midZ, 0.25, 1.2, span, glassRailMat);
     }
   }
 
   // ---- 三門市・大型市街地バトルフィールド生成 ----
   buildCityArena(floor) {
-    const ARENA_HALF = 68;
-    const WALL_H = 16;
-    const roofMat = new THREE.MeshStandardMaterial({ map: this.wallTex, roughness: 0.8 });
+    const ARENA_HALF = 82;
+    const WALL_H = 22;
+    const borderMat = new THREE.MeshStandardMaterial({ map: this.wallTex, roughness: 0.8 });
 
     // 外周防壁
-    this.addSolidBox(0, WALL_H / 2, -ARENA_HALF, ARENA_HALF * 2 + 4, WALL_H, 3, roofMat);
-    this.addSolidBox(0, WALL_H / 2,  ARENA_HALF, ARENA_HALF * 2 + 4, WALL_H, 3, roofMat);
-    this.addSolidBox(-ARENA_HALF, WALL_H / 2, 0, 3, WALL_H, ARENA_HALF * 2 + 4, roofMat);
-    this.addSolidBox( ARENA_HALF, WALL_H / 2, 0, 3, WALL_H, ARENA_HALF * 2 + 4, roofMat);
+    this.addSolidBox(0, WALL_H / 2, -ARENA_HALF, ARENA_HALF * 2 + 4, WALL_H, 3, borderMat);
+    this.addSolidBox(0, WALL_H / 2,  ARENA_HALF, ARENA_HALF * 2 + 4, WALL_H, 3, borderMat);
+    this.addSolidBox(-ARENA_HALF, WALL_H / 2, 0, 3, WALL_H, ARENA_HALF * 2 + 4, borderMat);
+    this.addSolidBox( ARENA_HALF, WALL_H / 2, 0, 3, WALL_H, ARENA_HALF * 2 + 4, borderMat);
 
-    // 大型複合ビル群の配置（すべて中に入って戦える立体建築）
     const variant = floor % 2;
 
-    // 1. 中央の巨大ランドマークビル（3階建て＋屋上＝高さ12.6mの超大型施設）
-    this.buildEnterableBuilding(0, 0, 3, 20);
+    // 1. 中央の巨大商業モール（30m×30m / 3層吹き抜けアトリウム＋エスカレーター）
+    this.buildEnterableBuilding(0, 0, 3, 30, true);
 
-    // 2. 四方の大型複合ビル（2階建て＋屋上）
+    // 2. 四方の大型複合オフィスビル（24m×24m / 折り返し階段＋屋上狙撃ポイント）
     const megaCoords = [
-      { x: -30, z: -24, floors: variant === 0 ? 3 : 2 },
-      { x:  30, z: -24, floors: variant === 0 ? 2 : 3 },
-      { x: -30, z:  24, floors: variant === 0 ? 2 : 3 },
-      { x:  30, z:  24, floors: variant === 0 ? 3 : 2 }
+      { x: -38, z: -30, floors: variant === 0 ? 3 : 2 },
+      { x:  38, z: -30, floors: variant === 0 ? 2 : 3 },
+      { x: -38, z:  30, floors: variant === 0 ? 2 : 3 },
+      { x:  38, z:  30, floors: variant === 0 ? 3 : 2 }
     ];
     megaCoords.forEach((b) => {
-      this.buildEnterableBuilding(b.x, b.z, b.floors, 18);
+      this.buildEnterableBuilding(b.x, b.z, b.floors, 24, false);
     });
 
-    // 3. 北西・北東・南西・南東の連絡空中ブリッジ（2階の高さで接続）
-    this.buildSkyBridge(-30, -24, -30, 24, 1);
-    this.buildSkyBridge( 30, -24,  30, 24, 1);
+    // 3. 南北の大型ビル同士を2階の高さ（6.5m）で結ぶ空中スカイブリッジ
+    this.buildSkyBridge(-38, -30, -38, 30, 1);
+    this.buildSkyBridge( 38, -30,  38, 30, 1);
 
-    // 4. 大通り沿いのグラスホッパー起動パッド（一気に屋上へ跳べるショートカット）
-    this.spawnJumpPad(-14, -14, 0.56);
-    this.spawnJumpPad( 14,  14, 0.56);
-    this.spawnJumpPad(-14,  14, 0.56);
-    this.spawnJumpPad( 14, -14, 0.56);
+    // 4. 大通り交差点のグラスホッパー起動パッド（一気に屋上へ跳べる立体起動ポイント）
+    this.spawnJumpPad(-19, -18, 0.65);
+    this.spawnJumpPad( 19,  18, 0.65);
+    this.spawnJumpPad(-19,  18, 0.65);
+    this.spawnJumpPad( 19, -18, 0.65);
 
-    // 5. 大通りの破壊可能遮蔽物（車両・バリケード）
+    // 5. 大通りの破壊可能遮蔽物（車両・トリオンバリケード）
     [
-      [-15, 0], [15, 0], [0, -24], [0, 24],
-      [-30, 0], [30, 0]
+      [-20, 0], [20, 0], [0, -32], [0, 32],
+      [-38, 0], [38, 0]
     ].forEach(([vx, vz]) => {
-      this.addDestructibleBlock(vx - 1.6, HALF, vz, 0x4fd1c5, 50);
-      this.addDestructibleBlock(vx + 1.6, HALF, vz, 0x4fd1c5, 50);
-      this.addDestructibleBlock(vx, HALF + BOX_SIZE, vz, 0x63b3ed, 50);
+      this.addDestructibleBlock(vx - 1.8, HALF, vz, 0x0284c7, 50);
+      this.addDestructibleBlock(vx + 1.8, HALF, vz, 0x0284c7, 50);
+      this.addDestructibleBlock(vx, HALF + BOX_SIZE, vz, 0x38bdf8, 50);
     });
 
-    // 中央大型ビル1階ロビー中央に転送ゲート設置
+    // 中央商業モール1階アトリウム中央に転送ゲート設置
     this.createExitPortal(0, 0, true);
 
     return {
-      playerStart: new THREE.Vector3(0, 0, 52),
-      rivalStart: new THREE.Vector3(0, 0, -52)
+      playerStart: new THREE.Vector3(0, 0, 62),
+      rivalStart: new THREE.Vector3(0, 0, -62)
     };
   }
 
-  spawnJumpPad(x, z, power = 0.52) {
+  spawnJumpPad(x, z, power = 0.62) {
     const pad = new THREE.Mesh(
-      new THREE.RingGeometry(0.4, 1.5, 24),
+      new THREE.RingGeometry(0.45, 1.65, 24),
       new THREE.MeshBasicMaterial({ color: 0x48bb78, side: THREE.DoubleSide, transparent: true, opacity: 0.85 })
     );
     pad.rotation.x = -Math.PI / 2;
@@ -354,7 +450,7 @@ export class World {
     const W = 20;
     const H = 20;
     const TILE_SIZE = 4.5;
-    const WALL_HEIGHT = 4.5;
+    const WALL_HEIGHT = 6.0;
     const wallPositions = [];
     const toWorldX = (gx) => (gx - 9.5) * TILE_SIZE;
     const toWorldZ = (gy) => (gy - 9.5) * TILE_SIZE;
@@ -368,7 +464,7 @@ export class World {
     }
 
     const wallGeo = new THREE.BoxGeometry(TILE_SIZE, WALL_HEIGHT, TILE_SIZE);
-    const wallMat = new THREE.MeshStandardMaterial({ map: this.wallTex, roughness: 0.75 });
+    const wallMat = new THREE.MeshStandardMaterial({ map: this.wallTex, roughness: 0.7 });
     const inst = new THREE.InstancedMesh(wallGeo, wallMat, wallPositions.length);
     const dummy = new THREE.Object3D();
     const halfTile = TILE_SIZE / 2;
@@ -471,7 +567,7 @@ export class World {
     this.portalLocked = false;
     this.portalMesh.material.color.setHex(0x00ffff);
     this.portalRing.material.color.setHex(0x63b3ed);
-    this.onToast('✨ ランク戦勝利！中央大型ビル1階の転送ゲート（Fキー）が解除されました！');
+    this.onToast('✨ ランク戦勝利！中央モール1階の転送ゲート（Fキー）が解除されました！');
   }
 
   addDestructibleBlock(x, y, z, color, hp) {
@@ -569,9 +665,8 @@ export class World {
     return true;
   }
 
-  // 段差（階段の1段分 0.55m以下）は自動乗り越え可能にし、それ以上の壁だけ衝突判定
   isBlockedForEntity(x, z, radius = 0.5, entityY = 0) {
-    const stepUpAllowance = 0.58;
+    const stepUpAllowance = 0.55;
     const feet = entityY + stepUpAllowance;
     const head = entityY + 2.0;
     for (const wall of this.walls) {
@@ -597,8 +692,7 @@ export class World {
       if (x > wall.position.x - hx - 0.42 && x < wall.position.x + hx + 0.42 &&
           z > wall.position.z - hz - 0.42 && z < wall.position.z + hz + 0.42) {
         const top = wall.position.y + hy;
-        // 階段の段差（+0.6mまで）または現在足元の床スラブを検出
-        if (currentY >= top - 0.62) {
+        if (currentY >= top - 0.58) {
           groundY = Math.max(groundY, top);
         }
       }
@@ -615,7 +709,7 @@ export class World {
     if (player) {
       for (const pad of this.jumpPads) {
         const d = Math.hypot(player.root.position.x - pad.pos.x, player.root.position.z - pad.pos.z);
-        if (d < 1.5 && player.root.position.y <= 0.35 && player.velocityY <= 0.05) {
+        if (d < 1.65 && player.root.position.y <= 0.35 && player.velocityY <= 0.05) {
           player.velocityY = pad.power;
           player.onGround = false;
           this.spawnHitSpark(pad.pos.clone().add(new THREE.Vector3(0, 0.3, 0)), 0x48bb78);
