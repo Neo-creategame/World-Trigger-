@@ -18,8 +18,8 @@ scene.add(hemiLight);
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.65);
 dirLight.position.set(35, 55, 35);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.mapSize.width = 1024;
+dirLight.shadow.mapSize.height = 1024;
 dirLight.shadow.camera.near = 1;
 dirLight.shadow.camera.far = 180;
 const d = 65;
@@ -34,6 +34,9 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.BasicShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 document.body.appendChild(renderer.domElement);
 
 window.addEventListener('resize', () => {
@@ -112,6 +115,7 @@ function enterFloor(floor) {
   if (floor === 0) {
     showToast('🏢 0F ボーダー本部基地');
   }
+  renderer.shadowMap.needsUpdate = true;
   saveGame();
 }
 
