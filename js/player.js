@@ -886,7 +886,8 @@ export class Player {
   }
 
   isCollidingHorizontal(x, z, pY) {
-    const feet = pY + 0.05;
+    // 階段の段差（0.58m以下）は自動登坂できるように余裕を持たせる
+    const feet = pY + 0.58;
     const head = pY + PLAYER_HEIGHT;
     for (const wall of this.world.walls) {
       const hx = wall.userData.halfX || 1.0;
@@ -948,6 +949,7 @@ export class Player {
     this.velocityY -= GRAVITY;
     this.root.position.y += this.velocityY;
 
+    // update(dt) 内の床・階段着地処理部分
     let groundY = 0;
     let landed = false;
 
@@ -959,11 +961,13 @@ export class Player {
           this.root.position.z > wall.position.z - hz - PLAYER_RADIUS && this.root.position.z < wall.position.z + hz + PLAYER_RADIUS) {
         const top = wall.position.y + hy;
         const bottom = wall.position.y - hy;
+        // 天井への頭ぶつけ判定（2階建てビル室内ジャンプ用）
         if (prevY + PLAYER_HEIGHT <= bottom && this.root.position.y + PLAYER_HEIGHT >= bottom && this.velocityY > 0) {
           this.root.position.y = bottom - PLAYER_HEIGHT;
           this.velocityY = 0;
         }
-        if (this.velocityY <= 0 && this.root.position.y >= top - 0.3 && this.root.position.y <= top + 0.2 && prevY >= top - 0.1) {
+        // 床スラブ・階段ステップ着地判定（階段登り対応のため -0.62 まで許容）
+        if (this.velocityY <= 0 && this.root.position.y >= top - 0.62 && this.root.position.y <= top + 0.25 && prevY >= top - 0.62) {
           groundY = Math.max(groundY, top);
           landed = true;
         }
@@ -1000,13 +1004,35 @@ export class Player {
 
   updateCamera(dt) {
     const focus = this.root.position.clone().add(new THREE.Vector3(0, 1.5, 0));
-    const offset = new THREE.Vector3(
-      Math.sin(this.yaw) * Math.cos(this.pitch) * this.camDist,
-      Math.sin(this.pitch) * this.camDist,
-      Math.cos(this.yaw) * Math.cos(this.pitch) * this.camDist
-    );
+    const dir = new THREE.Vector3(
+      Math.sin(this.yaw) * Math.cos(this.pitch),
+      Math.sin(this.pitch),
+      Math.cos(this.yaw) * Math.cos(this.pitch)
+    ).normalize();
 
-    const desiredPos = focus.clone().add(offset);
+    // 建物内部・壁際でカメラが壁の裏にめり込まないよう距離を自動調整
+    let safeDist = this.camDist;
+    for (let d = 1.2; d <= this.camDist; d += 0.4) {
+      const testPos = focus.clone().addScaledVector(dir, d);
+      let blocked = false;
+      for (const wall of this.world.walls) {
+        const hx = wall.userData.halfX || 1.0;
+        const hy = wall.userData.halfY || 1.0;
+        const hz = wall.userData.halfZ || 1.0;
+        if (Math.abs(testPos.x - wall.position.x) < hx + 0.35 &&
+            Math.abs(testPos.y - wall.position.y) < hy + 0.35 &&
+            Math.abs(testPos.z - wall.position.z) < hz + 0.35) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) {
+        safeDist = Math.max(1.4, d - 0.45);
+        break;
+      }
+    }
+
+    const desiredPos = focus.clone().addScaledVector(dir, safeDist);
     if (desiredPos.y < 0.6) desiredPos.y = 0.6;
 
     if (this.shakeTime > 0) {
@@ -1016,7 +1042,7 @@ export class Player {
       desiredPos.z += (Math.random() - 0.5) * this.shakeIntensity;
     }
 
-    this.camera.position.lerp(desiredPos, 0.35);
+    this.camera.position.lerp(desiredPos, 0.38);
     this.camera.lookAt(focus);
   }
 }
