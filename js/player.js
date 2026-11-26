@@ -967,7 +967,8 @@ export class Player {
           this.velocityY = 0;
         }
         // 床スラブ・階段ステップ着地判定（階段登り対応のため -0.62 まで許容）
-        if (this.velocityY <= 0 && this.root.position.y >= top - 0.62 && this.root.position.y <= top + 0.25 && prevY >= top - 0.62) {
+        //if (this.velocityY <= 0 && this.root.position.y >= top - 0.62 && this.root.position.y <= top + 0.25 && prevY >= top - 0.62) {
+          if (this.velocityY <= 0 && this.root.position.y >= top - 0.55 && this.root.position.y <= top + 0.28 && prevY >= top - 0.68) {
           groundY = Math.max(groundY, top);
           landed = true;
         }
