@@ -43,6 +43,11 @@ export const TRIGGER_LIST = {
     cd: 420, cost: 5,
     desc: '広範囲を薙ぎ払い敵弾をかき消す重厚ブレード（消費トリオン: 5 / LvUPで威力+20%）'
   },
+  egret: {
+    id: 'egret', slotType: 'normal', name: 'イーグレット',
+    cd: 950, cost: 25,
+    desc: '超長射程・高速スナイパーライフル。[C]キーでスコープ倍率ズーム切替（消費: 25）'
+  },
 
   // --- スキル枠（skill: E / Q / 1 / 2 / 3 にセット可） ---
   viper: {
@@ -79,6 +84,11 @@ export const TRIGGER_LIST = {
     id: 'shield', slotType: 'skill', name: 'シールド',
     cd: 5000, cost: 10,
     desc: '3秒間全身にトリオン障壁を展開し被ダメ大幅軽減（消費: 10 / LvUPで軽減率UP）'
+  },
+  focused_shield: {
+    id: 'focused_shield', slotType: 'skill', name: '集中シールド',
+    cd: 4200, cost: 20,
+    desc: '4秒間正面一点に小型高耐久シールドを固定。正面からの攻撃を90%カット＆弾き返す（消費: 20）'
   },
   teleporter: {
     id: 'teleporter', slotType: 'skill', name: 'テレポーター',
