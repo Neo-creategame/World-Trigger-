@@ -301,9 +301,13 @@ export class Player {
       const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
       const toAttacker = attackerPos.clone().sub(this.root.position).setY(0).normalize();
       if (forward.dot(toAttacker) > 0.45) {
-        dmg = Math.max(1, Math.round(dmg * 0.10));
-        this.world.spawnHitSpark(this.root.position.clone().add(new THREE.Vector3(0, 1.25, 0)).addScaledVector(forward, 1.1), 0x00ffff, 12);
-        this.onToast('🛡️ 集中シールドで直撃を防御！');
+        const shieldPos = this.root.position.clone()
+          .add(new THREE.Vector3(0, 1.25, 0))
+          .addScaledVector(forward, 1.15);
+        this.world.spawnHitSpark(shieldPos, 0x00ffff, 14);
+        this.onDamagePopup(shieldPos, 'BLOCK', false);
+        this.onToast('🛡️ 集中シールドで完全防御！（0ダメージ）');
+        return;
       }
     }
 
@@ -572,7 +576,7 @@ export class Player {
     } else if (id === 'focused_shield') {
       this.focusedShieldUntil = now + 4000 + Math.min(2000, (lv - 1) * 250);
       if (this.focusedShieldMesh) this.focusedShieldMesh.visible = true;
-      this.onToast('🛡️ 集中シールド展開（正面の攻撃を90%カット！）');
+      this.onToast('🛡️ 集中シールド展開');
     } else if (id === 'teleporter') {
       const moveDir = this.getInputMoveDirection();
       const dir = moveDir.lengthSq() > 0
