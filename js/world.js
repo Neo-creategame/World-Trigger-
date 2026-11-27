@@ -334,32 +334,34 @@ export class World {
     return mesh;
   }
 
-  // ---- 折り返し階段（ソリッド段差・踊り場付き・絶対に詰まらない構造） ----
+  // ---- 折り返し階段（乗降スペース確保・踊り場付き・絶対に詰まらない構造） ----
   buildSwitchbackStaircase(cx, cz, baseY, floorH, stairMat, railMat) {
     const totalW = 6.6;
     const flightW = 3.1;
-    const totalLen = 12.0;
-    const landingD = 3.4;
+    const totalLen = 11.4;
+    const landingD = 3.2;
     const runLen = totalLen - landingD;
     const midY = baseY + floorH * 0.5;
+    // 建物南側(z+)に十分な乗降スペースを空けるため、階段全体を北側(z-)へ 1.2m オフセット
+    const shiftZ = cz - 1.2;
 
     // 1. 中2階踊り場（北側奥）
-    const landingZ = cz - totalLen / 2 + landingD / 2;
+    const landingZ = shiftZ - totalLen / 2 + landingD / 2;
     this.addSolidBox(cx, midY - 0.3, landingZ, totalW, 0.6, landingD, stairMat, {}, false);
-    this.addSolidBox(cx, midY + 0.65, cz - totalLen / 2 - 0.15, totalW, 1.4, 0.3, railMat, {}, false);
+    this.addSolidBox(cx, midY + 0.65, shiftZ - totalLen / 2 - 0.15, totalW, 1.4, 0.3, railMat, {}, false);
 
     // 2. 前半階段（左側レーン：南側から北側の踊り場へ登る）
     const leftX = cx - totalW / 2 + flightW / 2;
     const steps1 = 12;
     const stepH1 = (floorH * 0.5) / steps1;
     const stepD1 = runLen / steps1;
-    const startZ1 = cz + totalLen / 2;
+    const startZ1 = shiftZ + totalLen / 2;
 
     for (let i = 0; i < steps1; i++) {
       const topY = baseY + stepH1 * (i + 1);
       const sz = startZ1 - stepD1 * (i + 0.5);
       const blockH = topY - baseY;
-      this.addSolidBox(leftX, baseY + blockH / 2, sz, flightW, blockH, stepD1 + 0.12, stairMat, {}, false);
+      this.addSolidBox(leftX, baseY + blockH / 2, sz, flightW, blockH, stepD1 + 0.14, stairMat, {}, false);
     }
 
     // 3. 後半階段（右側レーン：踊り場から南側の上階フロア出口へ登る）
@@ -367,36 +369,38 @@ export class World {
     const steps2 = 12;
     const stepH2 = (floorH * 0.5) / steps2;
     const stepD2 = runLen / steps2;
-    const startZ2 = cz - totalLen / 2 + landingD;
+    const startZ2 = shiftZ - totalLen / 2 + landingD;
 
     for (let i = 0; i < steps2; i++) {
       const topY = midY + stepH2 * (i + 1);
       const sz = startZ2 + stepD2 * (i + 0.5);
       const blockH = topY - baseY;
-      this.addSolidBox(rightX, baseY + blockH / 2, sz, flightW, blockH, stepD2 + 0.12, stairMat, {}, false);
+      this.addSolidBox(rightX, baseY + blockH / 2, sz, flightW, blockH, stepD2 + 0.14, stairMat, {}, false);
     }
 
-    // 4. 中央仕切り壁
-    this.addSolidBox(cx, baseY + floorH * 0.5, cz + 1.2, 0.36, floorH * 0.85, runLen - 0.6, railMat, {}, false);
+    // 4. 中央仕切り壁（乗降口を塞がない長さ）
+    this.addSolidBox(cx, baseY + floorH * 0.5, shiftZ + 1.4, 0.36, floorH * 0.85, runLen - 0.8, railMat, {}, false);
   }
 
-  // ---- 中央吹き抜けの商業モール風エスカレーター ----
-  buildMallEscalator(cx, cz, baseY, floorH, stairMat, glassRailMat) {
-    const width = 3.4;
-    const length = 11.0;
-    const steps = 16;
+  // ---- 中央吹き抜けの商業モール風エスカレーター（上下階の床に完全接続） ----
+  buildMallEscalator(cx, cz, baseY, floorH, atriumHalf, stairMat, glassRailMat) {
+    const width = 3.6;
+    // 南端(+atriumHalf)から北端(-atriumHalf)の床スラブにピタリと着地させる
+    const length = atriumHalf * 2;
+    const steps = 18;
     const stepH = floorH / steps;
     const stepD = length / steps;
 
     for (let i = 0; i < steps; i++) {
       const topY = baseY + stepH * (i + 1);
       const offsetZ = (length / 2) - stepD * (i + 0.5);
-      const blockH = Math.min(1.6, topY - baseY);
-      this.addSolidBox(cx, topY - blockH / 2, cz + offsetZ, width, blockH, stepD + 0.14, stairMat, {}, false);
+      const blockH = Math.min(1.8, topY - baseY);
+      this.addSolidBox(cx, topY - blockH / 2, cz + offsetZ, width, blockH, stepD + 0.16, stairMat, {}, false);
     }
 
+    // 両サイドのガラス手すり
     [-1, 1].forEach((side) => {
-      const rx = cx + side * (width / 2 + 0.15);
+      const rx = cx + side * (width / 2 + 0.16);
       for (let i = 0; i < 4; i++) {
         const segY = baseY + floorH * ((i + 0.5) / 4) + 0.55;
         const segZ = cz + (length / 2) - (length * (i + 0.5)) / 4;
@@ -419,45 +423,67 @@ export class World {
     const halfS = size / 2;
     const doorW = 5.6;
 
+    // 階段吹き抜けの寸法とオフセット（乗降スペースを広く確保）
     const stairWellW = 7.4;
     const stairCenterX = cx + halfS - wallThick - stairWellW / 2;
-    const stairTotalLen = 12.0;
+    const stairShiftZ = cz - 1.2;
+    const stairTotalLen = 11.4;
+    const rimW = 7.5;
+    const atriumHalf = halfS - rimW; // 中央モール吹き抜け半径 (14 - 7.5 = 6.5m)
 
     for (let f = 0; f < floors; f++) {
       const baseY = f * floorH;
       const wallCenterY = baseY + floorH / 2;
       const wallH = floorH - slabThick;
 
+      // 2階・3階の床スラブと吹き抜け安全手すり
       if (f > 0) {
         if (isCentralMall) {
-          const rimW = 7.5;
+          // 吹き抜け周囲の回廊フロア
           this.addSolidBox(cx, baseY - slabThick / 2, cz - halfS + rimW / 2, size, slabThick, rimW, floorMat);
           this.addSolidBox(cx, baseY - slabThick / 2, cz + halfS - rimW / 2, size, slabThick, rimW, floorMat);
           this.addSolidBox(cx - halfS + rimW / 2, baseY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
           this.addSolidBox(cx + halfS - rimW / 2, baseY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
 
-          const atriumHalf = halfS - rimW;
-          this.addSolidBox(cx - 4.8, baseY + 0.55, cz - atriumHalf, 5.2, 1.1, 0.25, glassRailMat, {}, false);
-          this.addSolidBox(cx + 4.8, baseY + 0.55, cz - atriumHalf, 5.2, 1.1, 0.25, glassRailMat, {}, false);
-          this.addSolidBox(cx, baseY + 0.55, cz + atriumHalf, atriumHalf * 2, 1.1, 0.25, glassRailMat, {}, false);
+          // 吹き抜け手すり（北側と南側の中央 4.4m をエスカレーター乗降口として開放！）
+          const gateHalfW = 2.2;
+          const railSideW = atriumHalf - gateHalfW;
+          const railCenterOffset = gateHalfW + railSideW / 2;
+          // 北側手すり（左右2分割）
+          this.addSolidBox(cx - railCenterOffset, baseY + 0.55, cz - atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+          this.addSolidBox(cx + railCenterOffset, baseY + 0.55, cz - atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+          // 南側手すり（左右2分割）
+          this.addSolidBox(cx - railCenterOffset, baseY + 0.55, cz + atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+          this.addSolidBox(cx + railCenterOffset, baseY + 0.55, cz + atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+          // 東西手すり
           this.addSolidBox(cx - atriumHalf, baseY + 0.55, cz, 0.25, 1.1, atriumHalf * 2, glassRailMat, {}, false);
           this.addSolidBox(cx + atriumHalf, baseY + 0.55, cz, 0.25, 1.1, atriumHalf * 2, glassRailMat, {}, false);
         } else {
+          // 通常ビル：階段室以外のメインフロア床
           const mainSlabW = size - stairWellW - wallThick;
           const mainCenterX = cx - halfS + mainSlabW / 2;
           this.addSolidBox(mainCenterX, baseY - slabThick / 2, cz, mainSlabW, slabThick, size, floorMat);
 
-          const sideLandingD = (size - stairTotalLen) / 2;
-          if (sideLandingD > 0.5) {
-            this.addSolidBox(stairCenterX, baseY - slabThick / 2, cz - halfS + sideLandingD / 2, stairWellW, slabThick, sideLandingD, floorMat);
-            this.addSolidBox(stairCenterX, baseY - slabThick / 2, cz + halfS - sideLandingD / 2, stairWellW, slabThick, sideLandingD, floorMat);
+          // 階段の北側奥・南側手前の床スラブ（階段の乗降口とピタリと接続）
+          const stairNorthEdge = stairShiftZ - stairTotalLen / 2;
+          const stairSouthEdge = stairShiftZ + stairTotalLen / 2;
+          const northSlabD = stairNorthEdge - (cz - halfS);
+          const southSlabD = (cz + halfS) - stairSouthEdge;
+
+          if (northSlabD > 0.3) {
+            this.addSolidBox(stairCenterX, baseY - slabThick / 2, (cz - halfS) + northSlabD / 2, stairWellW, slabThick, northSlabD, floorMat);
+          }
+          if (southSlabD > 0.3) {
+            this.addSolidBox(stairCenterX, baseY - slabThick / 2, stairSouthEdge + southSlabD / 2, stairWellW, slabThick, southSlabD, floorMat);
           }
 
-          const railLen = stairTotalLen - 3.6;
-          this.addSolidBox(stairCenterX - stairWellW / 2, baseY + 0.55, cz - 1.8, 0.25, 1.1, railLen, glassRailMat, {}, false);
+          // 階段吹き抜けの転落防止ガラス手すり（南側の昇降口 3.4m は開放して出入り自由にする）
+          const railLen = stairTotalLen - 3.4;
+          this.addSolidBox(stairCenterX - stairWellW / 2, baseY + 0.55, stairShiftZ - 1.7, 0.25, 1.1, railLen, glassRailMat, {}, false);
         }
       }
 
+      // 南北の外壁（中央に幅 5.6m の広い出入り口／窓）
       const sideSeg = (size - doorW) / 2;
       [-1, 1].forEach((zSign) => {
         const wz = cz + zSign * (halfS - wallThick / 2);
@@ -470,6 +496,7 @@ export class World {
         }
       });
 
+      // 東西の外壁（1階は出入り口、2階以上は破壊可能なトリオンガラス窓）
       [-1, 1].forEach((xSign) => {
         const wx = cx + xSign * (halfS - wallThick / 2);
         if (f === 0) {
@@ -484,40 +511,65 @@ export class World {
         }
       });
 
-      const colOff = isCentralMall ? 9.5 : 5.2;
-      this.addSolidBox(cx - colOff, wallCenterY, cz - colOff, 1.2, wallH, 1.2, wallMat);
-      this.addSolidBox(cx - colOff, wallCenterY, cz + colOff, 1.2, wallH, 1.2, wallMat);
+      // 屋内柱（階段やエスカレーターの動線を塞がない位置に配置）
+      const colOff = isCentralMall ? 9.5 : 4.8;
+      this.addSolidBox(cx - colOff, wallCenterY, cz - colOff, 1.1, wallH, 1.1, wallMat);
+      this.addSolidBox(cx - colOff, wallCenterY, cz + colOff, 1.1, wallH, 1.1, wallMat);
       if (isCentralMall) {
-        this.addSolidBox(cx + colOff, wallCenterY, cz - colOff, 1.2, wallH, 1.2, wallMat);
-        this.addSolidBox(cx + colOff, wallCenterY, cz + colOff, 1.2, wallH, 1.2, wallMat);
+        this.addSolidBox(cx + colOff, wallCenterY, cz - colOff, 1.1, wallH, 1.1, wallMat);
+        this.addSolidBox(cx + colOff, wallCenterY, cz + colOff, 1.1, wallH, 1.1, wallMat);
       }
 
+      // 上階への昇降設備
       if (isCentralMall) {
-        this.buildMallEscalator(cx, cz - 1.5, baseY, floorH, stairMat, glassRailMat);
+        if (f < floors - 1) {
+          this.buildMallEscalator(cx, cz, baseY, floorH, atriumHalf, stairMat, glassRailMat);
+        }
       } else {
         this.buildSwitchbackStaircase(stairCenterX, cz, baseY, floorH, stairMat, railMat);
       }
     }
 
+    // 屋上スラブ（最上階階段・エスカレーターの出口開口部を確保）
     const roofY = floors * floorH;
     if (isCentralMall) {
-      const rimW = 7.5;
       this.addSolidBox(cx, roofY - slabThick / 2, cz - halfS + rimW / 2, size, slabThick, rimW, floorMat);
       this.addSolidBox(cx, roofY - slabThick / 2, cz + halfS - rimW / 2, size, slabThick, rimW, floorMat);
       this.addSolidBox(cx - halfS + rimW / 2, roofY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
       this.addSolidBox(cx + halfS - rimW / 2, roofY - slabThick / 2, cz, rimW, slabThick, size - rimW * 2, floorMat);
+
+      // 屋上吹き抜け周囲の安全手すり（乗降口は開放）
+      const gateHalfW = 2.2;
+      const railSideW = atriumHalf - gateHalfW;
+      const railCenterOffset = gateHalfW + railSideW / 2;
+      this.addSolidBox(cx - railCenterOffset, roofY + 0.55, cz - atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+      this.addSolidBox(cx + railCenterOffset, roofY + 0.55, cz - atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+      this.addSolidBox(cx - railCenterOffset, roofY + 0.55, cz + atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+      this.addSolidBox(cx + railCenterOffset, roofY + 0.55, cz + atriumHalf, railSideW, 1.1, 0.25, glassRailMat, {}, false);
+      this.addSolidBox(cx - atriumHalf, roofY + 0.55, cz, 0.25, 1.1, atriumHalf * 2, glassRailMat, {}, false);
+      this.addSolidBox(cx + atriumHalf, roofY + 0.55, cz, 0.25, 1.1, atriumHalf * 2, glassRailMat, {}, false);
     } else {
       const mainSlabW = size - stairWellW - wallThick;
       const mainCenterX = cx - halfS + mainSlabW / 2;
       this.addSolidBox(mainCenterX, roofY - slabThick / 2, cz, mainSlabW, slabThick, size, floorMat);
 
-      const sideLandingD = (size - stairTotalLen) / 2;
-      if (sideLandingD > 0.5) {
-        this.addSolidBox(stairCenterX, roofY - slabThick / 2, cz - halfS + sideLandingD / 2, stairWellW, slabThick, sideLandingD, floorMat);
-        this.addSolidBox(stairCenterX, roofY - slabThick / 2, cz + halfS - sideLandingD / 2, stairWellW, slabThick, sideLandingD, floorMat);
+      const stairNorthEdge = stairShiftZ - stairTotalLen / 2;
+      const stairSouthEdge = stairShiftZ + stairTotalLen / 2;
+      const northSlabD = stairNorthEdge - (cz - halfS);
+      const southSlabD = (cz + halfS) - stairSouthEdge;
+
+      if (northSlabD > 0.3) {
+        this.addSolidBox(stairCenterX, roofY - slabThick / 2, (cz - halfS) + northSlabD / 2, stairWellW, slabThick, northSlabD, floorMat);
       }
+      if (southSlabD > 0.3) {
+        this.addSolidBox(stairCenterX, roofY - slabThick / 2, stairSouthEdge + southSlabD / 2, stairWellW, slabThick, southSlabD, floorMat);
+      }
+
+      const railLen = stairTotalLen - 3.4;
+      this.addSolidBox(stairCenterX - stairWellW / 2, roofY + 0.55, stairShiftZ - 1.7, 0.25, 1.1, railLen, glassRailMat, {}, false);
     }
 
+    // 屋上パラペット（スナイパー用胸壁）＆遮蔽物
     const paraH = 1.15;
     this.addSolidBox(cx, roofY + paraH / 2, cz - halfS + 0.35, size, paraH, 0.7, wallMat);
     this.addSolidBox(cx, roofY + paraH / 2, cz + halfS - 0.35, size, paraH, 0.7, wallMat);
