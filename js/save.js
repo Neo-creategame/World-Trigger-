@@ -32,6 +32,7 @@ export const state = {
     kogetsu: 1,
     asteroid: 1,
     shield: 1,
+    egret: 1,
     ibis: 1
   }
 };
