@@ -965,6 +965,7 @@ export class Player {
 
   update(dt) {
     const now = performance.now();
+    if (this.model) this.model.visible = this.zoomLevel === 0;
     if (now > this.comboResetTimer) this.comboStep = 0;
     const mTrion = maxTrion();
     if (this.trion > mTrion) this.trion = mTrion;
@@ -1080,7 +1081,7 @@ export class Player {
   }
 
   updateCamera(dt) {
-    // スナイパースコープ倍率に応じたカメラFOVと距離の切り替え
+    // スナイパースコープ倍率に応じたカメラFOVの切り替え
     const targetFovs = [65, 34, 18, 11];
     const targetFov = targetFovs[this.zoomLevel] || 65;
     if (Math.abs(this.camera.fov - targetFov) > 0.2) {
@@ -1088,40 +1089,42 @@ export class Player {
       this.camera.updateProjectionMatrix();
     }
 
-    const focus = this.root.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+    const focus = this.root.position.clone().add(new THREE.Vector3(0, 1.55, 0));
     const dir = new THREE.Vector3(
       Math.sin(this.yaw) * Math.cos(this.pitch),
       Math.sin(this.pitch),
       Math.cos(this.yaw) * Math.cos(this.pitch)
     ).normalize();
 
-    // スコープ展開中は肩越し（一人称に近い位置）へカメラを寄せる
-    const baseCamDist = this.zoomLevel > 0 ? 0.6 : this.camDist;
-    let safeDist = baseCamDist;
-
-    // 建物内部・壁際でカメラが壁の裏にめり込まないよう距離を自動調整
-    for (let d = 1.2; d <= baseCamDist; d += 0.4) {
-      const testPos = focus.clone().addScaledVector(dir, d);
-      let blocked = false;
-      for (const wall of this.world.walls) {
-        if (wall.material?.transparent) continue;
-        const hx = wall.userData.halfX || 1.0;
-        const hy = wall.userData.halfY || 1.0;
-        const hz = wall.userData.halfZ || 1.0;
-        if (Math.abs(testPos.x - wall.position.x) < hx + 0.35 &&
-            Math.abs(testPos.y - wall.position.y) < hy + 0.35 &&
-            Math.abs(testPos.z - wall.position.z) < hz + 0.35) {
-          blocked = true;
+    let desiredPos;
+    if (this.zoomLevel > 0) {
+      // スコープ展開中は一人称（目の前）位置にカメラを固定
+      desiredPos = focus.clone().addScaledVector(dir, -0.35);
+    } else {
+      let safeDist = this.camDist;
+      for (let d = 1.2; d <= this.camDist; d += 0.4) {
+        const testPos = focus.clone().addScaledVector(dir, d);
+        let blocked = false;
+        for (const wall of this.world.walls) {
+          if (wall.material?.transparent) continue;
+          const hx = wall.userData.halfX || 1.0;
+          const hy = wall.userData.halfY || 1.0;
+          const hz = wall.userData.halfZ || 1.0;
+          if (Math.abs(testPos.x - wall.position.x) < hx + 0.35 &&
+              Math.abs(testPos.y - wall.position.y) < hy + 0.35 &&
+              Math.abs(testPos.z - wall.position.z) < hz + 0.35) {
+            blocked = true;
+            break;
+          }
+        }
+        if (blocked) {
+          safeDist = Math.max(1.4, d - 0.45);
           break;
         }
       }
-      if (blocked) {
-        safeDist = Math.max(1.4, d - 0.45);
-        break;
-      }
+      desiredPos = focus.clone().addScaledVector(dir, safeDist);
     }
 
-    const desiredPos = focus.clone().addScaledVector(dir, safeDist);
     if (desiredPos.y < 0.6) desiredPos.y = 0.6;
 
     if (this.shakeTime > 0) {
@@ -1131,8 +1134,8 @@ export class Player {
       desiredPos.z += (Math.random() - 0.5) * this.shakeIntensity;
     }
 
-    this.camera.position.lerp(desiredPos, this.zoomLevel > 0 ? 0.6 : 0.25);
-    const lookTarget = focus.clone().addScaledVector(dir, -12);
+    this.camera.position.lerp(desiredPos, this.zoomLevel > 0 ? 0.85 : 0.25);
+    const lookTarget = focus.clone().addScaledVector(dir, -16);
     this.camera.lookAt(lookTarget);
   }
 }
