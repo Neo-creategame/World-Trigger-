@@ -622,7 +622,7 @@ export class World {
 
   // ---- 進入不可の戸建て住宅（屋根の上にグラスホッパーで登れる） ----
   buildClosedHouse(cx, cz, w = 8.5, d = 7.5, stories = 2, wallColor = 0xe2e8f0, roofColor = 0x334155) {
-    const wallH = stories === 2 ? 9.2 : 4,6;
+    const wallH = stories === 2 ? 9.2 : 4.6;
     const houseWallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.65 });
     const roofMat = new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.5 });
     const trimMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.5 });
