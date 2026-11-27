@@ -294,7 +294,21 @@ function updateHud(now) {
 let lastFpsTime = performance.now();
 let prevFrameTime = performance.now();
 let frames = 0;
+// ---- 開発・デバッグ用コンソールコマンド ----
+window.addPts = (amount = 10000) => {
+  PLAYER.points += Number(amount);
+  saveGame();
+  showToast(`💰 デバッグ支給：功績ポイント +${Number(amount).toLocaleString()} PTS`);
+  console.log(`現在の功績ポイント: ${PLAYER.points} PTS`);
+};
 
+window.unlockAllTriggers = () => {
+  Object.keys(TRIGGER_LIST).forEach((id) => {
+    state.ownedTriggers[id] = Math.max(1, state.ownedTriggers[id] || 0);
+  });
+  saveGame();
+  showToast('💠 全トリガーを解放しました！');
+};
 function animate() {
   requestAnimationFrame(animate);
 
