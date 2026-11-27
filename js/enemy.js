@@ -29,6 +29,18 @@ const RIVAL_ARCHETYPES = [
     aiReaction: 0.78
   },
   {
+    role: 'sniper',
+    title: '狙撃手（スナイパー）',
+    names: ['C級狙撃手・千佳訓練生', 'B級狙撃手・半崎義人モデル', 'A級狙撃手・当真勇モデル', 'A級狙撃手・東春秋モデル'],
+    color: 0xef4444,
+    visorColor: 0xff4444,
+    trionMult: 0.95,
+    powerMult: 1.45,
+    speed: 0.13,
+    preferredDist: 34.0,
+    aiReaction: 0.85
+  },
+  {
     role: 'allrounder',
     title: '万能手（オールラウンダー）',
     names: ['B級万能手・三雲修モデル', 'B級万能手・諏訪洸太郎モデル', 'A級万能手・嵐山准モデル', 'A級万能手・木崎レイジモデル'],
@@ -59,7 +71,10 @@ export class EnemyManager {
   }
 
   clearAll() {
-    for (const e of this.enemies) this.scene.remove(e.root);
+    for (const e of this.enemies) {
+      if (e.laserLine) this.scene.remove(e.laserLine);
+      this.scene.remove(e.root);
+    }
     this.enemies = [];
     this.activeBoss = null;
     this.clearAllProjectilesAndHazards();
@@ -79,24 +94,29 @@ export class EnemyManager {
     this.fxMeshes = [];
   }
 
-  // 1vs1 市街地ランク模擬戦の対戦相手を生成
   spawnForFloor(floor, rivalStart) {
     this.clearAll();
     if (floor === 0 || !rivalStart) return;
 
     const arch = RIVAL_ARCHETYPES[(floor - 1) % RIVAL_ARCHETYPES.length];
-    const tierIdx = Math.min(arch.names.length - 1, Math.floor((floor - 1) / 3));
+    const tierIdx = Math.min(arch.names.length - 1, Math.floor((floor - 1) / 4));
     const rivalName = `【Rank.${floor}】${arch.names[tierIdx]}`;
 
     const baseTrion = 320 + (floor - 1) * 95;
     const maxHp = Math.round(baseTrion * arch.trionMult);
     const atk = Math.round((24 + (floor - 1) * 5) * arch.powerMult);
 
+    // スナイパーの場合は高所屋上（北西ビル屋上）からスタートさせる
+    const spawnPos = arch.role === 'sniper'
+      ? new THREE.Vector3(-34, 19.5, -32)
+      : rivalStart.clone();
+
     const rival = this.createRivalAgent({
       name: rivalName,
       role: arch.role,
-      x: rivalStart.x,
-      z: rivalStart.z,
+      x: spawnPos.x,
+      y: spawnPos.y || 0,
+      z: spawnPos.z,
       color: arch.color,
       visorColor: arch.visorColor,
       scale: 1.0,
@@ -117,10 +137,9 @@ export class EnemyManager {
 
   createRivalAgent(cfg) {
     const root = new THREE.Group();
-    root.position.set(cfg.x, 0, cfg.z);
+    root.position.set(cfg.x, cfg.y || 0, cfg.z);
     this.scene.add(root);
 
-    // 隊員モデル（ボディ・ヘッド・バイザー・ブレード・シールド）
     const mat = new THREE.MeshStandardMaterial({
       color: 0x1e293b,
       emissive: cfg.color,
@@ -159,10 +178,20 @@ export class EnemyManager {
     );
     bladeMesh.position.set(0, 0.65, 0.25);
     bladeMesh.rotation.x = 0.35;
-    bladeMesh.visible = cfg.role !== 'shooter';
+    bladeMesh.visible = cfg.role === 'attacker' || cfg.role === 'allrounder';
     swordPivot.add(bladeMesh);
 
-    // AIシールド（展開中可視化メッシュ）
+    // スナイパーライフル銃身（スナイパー用）
+    if (cfg.role === 'sniper') {
+      const rifle = new THREE.Mesh(
+        new THREE.BoxGeometry(0.1, 0.14, 1.9),
+        new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: 0xef4444, emissiveIntensity: 0.35 })
+      );
+      rifle.position.set(0.35, 1.35, 0.75);
+      root.add(rifle);
+    }
+
+    // AIシールド
     const shieldBubble = new THREE.Mesh(
       new THREE.IcosahedronGeometry(1.3, 1),
       new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.6 })
@@ -170,6 +199,16 @@ export class EnemyManager {
     shieldBubble.position.y = 1.1;
     shieldBubble.visible = false;
     root.add(shieldBubble);
+
+    // 狙撃レーザーサイト（予兆線）
+    const laserGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, 0, 1)
+    ]);
+    const laserMat = new THREE.LineBasicMaterial({ color: 0xff2244, transparent: true, opacity: 0.85 });
+    const laserLine = new THREE.Line(laserGeo, laserMat);
+    laserLine.visible = false;
+    this.scene.add(laserLine);
 
     // 頭上HPバー
     const hpBg = new THREE.Mesh(
@@ -193,20 +232,19 @@ export class EnemyManager {
       mat,
       swordPivot,
       shieldBubble,
+      laserLine,
       hpBg,
       hpFill,
       hpBarWidth: 1.34,
       isBoss: true,
       isRivalAgent: true,
 
-      // 戦術ステートマシン
-      aiState: 'flank', // 'flank'（遮蔽・回り込み）| 'engage'（交戦）| 'evade'（距離調整・離脱）| 'windup'（大技溜め）
+      aiState: 'flank',
       aiDecisionTimer: 0.35,
       strafeSign: Math.random() < 0.5 ? 1 : -1,
       velocityY: 0,
       onGround: true,
 
-      // クールダウン管理（プレイヤーと同条件）
       cdNormal: 0,
       cdSub: 0,
       cdMobility: 0,
@@ -217,20 +255,20 @@ export class EnemyManager {
       stunUntil: 0,
       hitFlashUntil: 0,
       windupTimer: 0,
-      pendingSkill: null
+      pendingSkill: null,
+      lockedAimPos: null
     };
 
     this.enemies.push(agent);
     return agent;
   }
 
-  // プレイヤーがトリガーを使った瞬間にAIが反応（シールド・回避）
   onPlayerSkillUsed(playerPos) {
     const now = performance.now();
     for (const agent of this.enemies) {
       if (!agent.isRivalAgent || agent.hp <= 0 || now < agent.stunUntil) continue;
       const dist = agent.root.position.distanceTo(playerPos);
-      if (dist > 28) continue;
+      if (dist > 32) continue;
 
       if (Math.random() < agent.aiReaction) {
         if (now >= agent.cdShield && agent.aiTrion >= 15) {
@@ -256,7 +294,6 @@ export class EnemyManager {
     agent.aiTrion -= 10;
     agent.cdMobility = now + 2200;
 
-    // 緑の反発パッド生成
     const pad = new THREE.Mesh(
       new THREE.RingGeometry(0.4, 1.5, 24),
       new THREE.MeshBasicMaterial({ color: 0x48bb78, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
@@ -270,24 +307,20 @@ export class EnemyManager {
     const right = new THREE.Vector3(-toTarget.z, 0, toTarget.x);
 
     if (mode === 'approach') {
-      // 相手の斜め上空へ立体跳躍して死角を突く
       agent.dodgeVel.copy(toTarget).addScaledVector(right, agent.strafeSign * 0.55).normalize().multiplyScalar(0.42);
       agent.velocityY = 0.34;
     } else if (mode === 'highground') {
-      // ビル屋上への垂直大跳躍
-      agent.dodgeVel.copy(toTarget).multiplyScalar(0.22);
-      agent.velocityY = 0.48;
+      agent.dodgeVel.copy(toTarget).multiplyScalar(0.24);
+      agent.velocityY = 0.52;
     } else {
-      // 緊急離脱（後方＋横ステップ）
       agent.dodgeVel.copy(toTarget).multiplyScalar(-0.38).addScaledVector(right, agent.strafeSign * 0.45).normalize().multiplyScalar(0.42);
-      agent.velocityY = 0.24;
+      agent.velocityY = 0.26;
     }
     agent.onGround = false;
     agent.dodgeUntil = now + 320;
     return true;
   }
 
-  // AIのトリオンキューブ展開（0.35秒）→射撃演出
   chargeAndFireAgentCube(agent, color, onFire) {
     const yaw = agent.root.rotation.y;
     const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
@@ -323,7 +356,6 @@ export class EnemyManager {
     if (!enemy || enemy.hp <= 0) return false;
     const now = performance.now();
 
-    // AIがステップ回避中の場合はジャスト回避判定
     if (now < enemy.dodgeUntil && Math.random() < 0.45) {
       const popupPos = enemy.root.position.clone().add(new THREE.Vector3(0, 2.0, 0));
       this.onDamagePopup(popupPos, 'DODGE', false);
@@ -332,12 +364,10 @@ export class EnemyManager {
 
     let dmg = Math.round(rawDmg);
 
-    // AIがシールド展開中ならダメージ70%カット
     if (now < enemy.shieldUntil) {
       dmg = Math.max(1, Math.round(dmg * 0.30));
       this.world.spawnHitSpark(enemy.root.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 0x00ffff);
     } else if (enemy.isRivalAgent && now >= enemy.cdShield && enemy.aiTrion >= 15 && Math.random() < enemy.aiReaction * 0.45) {
-      // 被弾直後に反射的にシールドを張って追撃を防ぐ
       this.activateAgentShield(enemy, 2000);
     }
 
@@ -347,6 +377,7 @@ export class EnemyManager {
     if (opts.stunMs) {
       enemy.stunUntil = Math.max(enemy.stunUntil, now + opts.stunMs);
       enemy.aiState = 'flank';
+      if (enemy.laserLine) enemy.laserLine.visible = false;
     }
 
     const popupPos = enemy.root.position.clone().add(new THREE.Vector3(0, 2.0, 0));
@@ -366,8 +397,8 @@ export class EnemyManager {
 
   killEnemy(enemy) {
     const pos = enemy.root.position.clone();
+    if (enemy.laserLine) this.scene.remove(enemy.laserLine);
 
-    // ベイルアウト（光の柱となって緊急脱出）演出
     const beam = new THREE.Mesh(
       new THREE.CylinderGeometry(0.85, 0.85, 32, 16),
       new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.9 })
@@ -436,24 +467,25 @@ export class EnemyManager {
     requestAnimationFrame(anim);
   }
 
-  // ---- ステップ2：人型隊員AIの戦術思考・行動ルーチン ----
+  // ---- 人型隊員AIの戦術思考・行動ルーチン ----
   updateRivalAgent(agent, dt, player) {
     const now = performance.now();
     const pPos = player.root.position;
     const aPos = agent.root.position;
 
-    // シールド視覚効果更新
     agent.shieldBubble.visible = now < agent.shieldUntil;
     if (agent.shieldBubble.visible) {
       agent.shieldBubble.rotation.y += dt * 3.0;
     }
 
-    // トリオン自然回復
     agent.aiTrion = Math.min(agent.aiMaxTrion, agent.aiTrion + agent.aiMaxTrion * 0.015 * dt);
 
-    if (now < agent.stunUntil) return;
+    if (now < agent.stunUntil) {
+      if (agent.laserLine) agent.laserLine.visible = false;
+      return;
+    }
 
-    // 飛来してくるプレイヤーの弾を検知して自動シールド／回避
+    // 飛来弾を検知して自動シールド
     if (now >= agent.cdShield && now >= agent.shieldUntil && agent.aiTrion >= 15) {
       for (const proj of player.projectiles) {
         if (proj.mesh.position.distanceTo(aPos) < 6.5 && Math.random() < agent.aiReaction * 0.25) {
@@ -469,15 +501,28 @@ export class EnemyManager {
       ? new THREE.Vector3(toPlayer.x, 0, toPlayer.z).normalize()
       : new THREE.Vector3(0, 0, 1);
 
-    // 常にプレイヤーの方を向く
     agent.root.rotation.y = Math.atan2(dirHoriz.x, dirHoriz.z);
 
-    // 大技溜め中（旋空弧月 / メテオラ）
+    // 大技・狙撃の照準溜め中
     if (agent.aiState === 'windup') {
       agent.windupTimer -= dt;
       agent.mat.emissiveIntensity = 0.85;
+
+      // スナイパーの場合は赤い照準レーザーを更新
+      if (agent.pendingSkill === 'snipe' && agent.laserLine) {
+        agent.laserLine.visible = true;
+        const startPt = aPos.clone().add(new THREE.Vector3(0, 1.45, 0));
+        // 発射0.22秒前に照準位置を固定（ステップや遮蔽物で避けられる猶予を作る）
+        if (agent.windupTimer > 0.22) {
+          agent.lockedAimPos = pPos.clone().add(new THREE.Vector3(0, 1.15, 0));
+        }
+        const endPt = agent.lockedAimPos || pPos.clone().add(new THREE.Vector3(0, 1.15, 0));
+        agent.laserLine.geometry.setFromPoints([startPt, endPt]);
+      }
+
       if (agent.windupTimer <= 0) {
         agent.mat.emissiveIntensity = 0.15;
+        if (agent.laserLine) agent.laserLine.visible = false;
         agent.aiState = 'engage';
         this.executeAgentSubSkill(agent, pPos, dirHoriz);
       }
@@ -485,7 +530,8 @@ export class EnemyManager {
       return;
     }
 
-    // 一定間隔で戦況判断（遮蔽物チェック・間合い評価・兵科別戦術切り替え）
+    if (agent.laserLine) agent.laserLine.visible = false;
+
     agent.aiDecisionTimer -= dt;
     const hasLOS = this.world.hasLineOfSight(aPos, pPos);
 
@@ -493,26 +539,34 @@ export class EnemyManager {
       agent.aiDecisionTimer = 0.35 + Math.random() * 0.25;
       if (Math.random() < 0.35) agent.strafeSign *= -1;
 
-      if (!hasLOS && horizDist > 7.0) {
-        // ビル陰に隠れている間は回り込み接近（フランク移動）
+      if (agent.role === 'sniper') {
+        // スナイパーは常に高所・遠距離を維持
+        if (horizDist < 15.0 && now >= agent.cdMobility) {
+          this.useAgentGrasshopper(agent, pPos, 'evade');
+          agent.aiState = 'evade';
+        } else if (aPos.y < 10.0 && now >= agent.cdMobility) {
+          this.useAgentGrasshopper(agent, pPos, 'highground');
+          agent.aiState = 'engage';
+        } else if (!hasLOS) {
+          agent.aiState = 'flank';
+        } else {
+          agent.aiState = 'engage';
+        }
+      } else if (!hasLOS && horizDist > 7.0) {
         agent.aiState = 'flank';
       } else if (agent.role === 'shooter' && horizDist < 8.5) {
-        // シューターは近距離に詰められたら離脱優先
         agent.aiState = 'evade';
         if (now >= agent.cdMobility) this.useAgentGrasshopper(agent, pPos, 'evade');
       } else if (agent.role === 'attacker' && horizDist > 9.0 && hasLOS && now >= agent.cdMobility) {
-        // アタッカーは射線が通ったらグラスホッパーで一気に距離を詰める
         this.useAgentGrasshopper(agent, pPos, 'approach');
         agent.aiState = 'engage';
       } else if (pPos.y > aPos.y + 2.2 && now >= agent.cdMobility) {
-        // プレイヤーがビル屋上にいる場合、グラスホッパーで高所へ追撃
         this.useAgentGrasshopper(agent, pPos, 'highground');
       } else {
         agent.aiState = 'engage';
       }
     }
 
-    // 移動ベクトル決定
     let moveVec = new THREE.Vector3();
     if (now < agent.dodgeUntil) {
       moveVec.copy(agent.dodgeVel);
@@ -520,32 +574,41 @@ export class EnemyManager {
       const right = new THREE.Vector3(-dirHoriz.z, 0, dirHoriz.x).multiplyScalar(agent.strafeSign);
 
       if (agent.aiState === 'flank') {
-        // ビルの角を回り込むように斜め前進
         moveVec.copy(dirHoriz).multiplyScalar(0.75).addScaledVector(right, 0.65).normalize().multiplyScalar(agent.speed * 1.1);
       } else if (agent.aiState === 'evade') {
-        // 撃ちながら後退＋横移動
         moveVec.copy(dirHoriz).multiplyScalar(-0.85).addScaledVector(right, 0.55).normalize().multiplyScalar(agent.speed * 1.05);
       } else {
-        // 兵科ごとの適正距離（preferredDist）を保ちつつ左右ストレイフ機動
         const diff = horizDist - agent.preferredDist;
-        const forwardFactor = Math.abs(diff) < 1.5 ? 0 : Math.sign(diff) * 0.7;
+        const forwardFactor = Math.abs(diff) < 2.0 ? 0 : Math.sign(diff) * 0.7;
         moveVec.copy(dirHoriz).multiplyScalar(forwardFactor).addScaledVector(right, 0.85).normalize().multiplyScalar(agent.speed);
       }
     }
 
     this.applyAgentPhysics(agent, moveVec);
 
-    // 攻撃・スキル実行判断
     if (hasLOS || horizDist <= 5.0) {
       this.tryAgentAttack(agent, now, horizDist, pPos, dirHoriz);
     }
   }
 
   tryAgentAttack(agent, now, dist, pPos, dirHoriz) {
-    // 1. サブトリガー（大技）の使用判定
+    // スナイパー専用：赤い照準レーザーサイト予兆→超高速狙撃
+    if (agent.role === 'sniper') {
+      if (now >= agent.cdNormal && dist <= 75.0 && agent.aiTrion >= 15) {
+        agent.aiTrion -= 15;
+        agent.cdNormal = now + 3200;
+        agent.aiState = 'windup';
+        agent.windupTimer = 0.85;
+        agent.pendingSkill = 'snipe';
+        agent.lockedAimPos = pPos.clone().add(new THREE.Vector3(0, 1.15, 0));
+        this.onToast(`🎯 ${agent.name} の照準レーザーを感知！遮蔽物へ！`);
+      }
+      return;
+    }
+
+    // サブトリガー
     if (now >= agent.cdSub && agent.aiTrion >= 40) {
       if (agent.role === 'attacker' && dist <= 8.5) {
-        // 旋空弧月（長距離斬撃波）の予備動作へ
         agent.aiTrion -= 40;
         agent.cdSub = now + 4800;
         agent.aiState = 'windup';
@@ -555,7 +618,6 @@ export class EnemyManager {
         return;
       }
       if (agent.role === 'shooter' && dist >= 7.0 && dist <= 26.0) {
-        // バイパー / メテオラ展開
         agent.aiTrion -= 45;
         agent.cdSub = now + 4500;
         agent.aiState = 'windup';
@@ -564,7 +626,6 @@ export class EnemyManager {
         return;
       }
       if (agent.role === 'allrounder' && dist <= 18.0) {
-        // エスクードで遮蔽 or ハウンド追撃
         agent.aiTrion -= 40;
         agent.cdSub = now + 4600;
         if (dist <= 6.5) {
@@ -578,10 +639,9 @@ export class EnemyManager {
       }
     }
 
-    // 2. 通常トリガー（弧月斬撃 / アステロイド連射）
+    // 通常トリガー
     if (now >= agent.cdNormal) {
       if (agent.role !== 'shooter' && dist <= 3.6) {
-        // 弧月近接斬撃
         agent.cdNormal = now + 680;
         this.swingAgentBlade(agent);
 
@@ -599,7 +659,6 @@ export class EnemyManager {
           this.playerRef.receiveEnemyAttack(agent.atk, agent.root.position);
         }
       } else if (dist <= 26.0 && agent.aiTrion >= 8) {
-        // アステロイド射撃（キューブ展開後に3連射）
         agent.aiTrion -= 8;
         agent.cdNormal = now + (agent.role === 'shooter' ? 950 : 1350);
         this.chargeAndFireAgentCube(agent, 0x00ffff, (origin) => {
@@ -620,7 +679,13 @@ export class EnemyManager {
 
   executeAgentSubSkill(agent, pPos, dirHoriz) {
     const skill = agent.pendingSkill;
-    if (skill === 'senku') {
+    if (skill === 'snipe') {
+      const origin = agent.root.position.clone().add(new THREE.Vector3(0, 1.45, 0));
+      const targetPt = agent.lockedAimPos || pPos.clone().add(new THREE.Vector3(0, 1.15, 0));
+      const aimDir = targetPt.sub(origin).normalize();
+      // 超高速スナイパー弾（弾速 1.85 / 高威力 1.8倍）
+      this.fireAgentOrb(agent, origin, aimDir, 1.85, 1.8, { radius: 0.22, color: 0xff2244, life: 2.5 });
+    } else if (skill === 'senku') {
       this.swingAgentBlade(agent);
       const origin = agent.root.position.clone().add(new THREE.Vector3(0, 1.1, 0));
       this.fireAgentOrb(agent, origin, dirHoriz, 0.78, 1.55, { radius: 0.55, color: 0x48bb78, life: 1.2 });
@@ -671,7 +736,6 @@ export class EnemyManager {
     if (!this.world.isBlockedForEntity(nextX, pos.z, 0.45, pos.y)) pos.x = nextX;
     if (!this.world.isBlockedForEntity(pos.x, nextZ, 0.45, pos.y)) pos.z = nextZ;
 
-    // 重力＆ビル屋上着地判定
     agent.velocityY -= 0.014;
     pos.y += agent.velocityY;
     const groundY = this.world.getGroundHeightAt(pos.x, pos.z, pos.y);
@@ -706,7 +770,6 @@ export class EnemyManager {
       }
     }
 
-    // エフェクト更新
     this.fxMeshes = this.fxMeshes.filter((fx) => {
       fx.life -= dt;
       if (fx.mesh.material) {
@@ -719,7 +782,6 @@ export class EnemyManager {
       return true;
     });
 
-    // AI射撃弾の更新
     this.enemyProjectiles = this.enemyProjectiles.filter((p) => {
       p.life -= dt;
       if (p.homing) {
@@ -740,13 +802,30 @@ export class EnemyManager {
         return false;
       }
 
-      if (p.life <= 0 || this.world.isBlockedForEntity(p.mesh.position.x, p.mesh.position.z, 0.25, p.mesh.position.y - 1.0)) {
-        if (p.isExplosive) {
-          this.world.spawnHitSpark(p.mesh.position, 0xff4500);
-          if (p.mesh.position.distanceTo(pPos) <= 3.5) {
+      // 破壊可能オブジェクト（車・自販機・エスクード等）への着弾判定
+      for (const wall of this.world.walls) {
+        const hx = wall.userData.halfX || 0.8;
+        const hy = wall.userData.halfY || 0.8;
+        const hz = wall.userData.halfZ || 0.8;
+        if (
+          Math.abs(p.mesh.position.x - wall.position.x) < hx + 0.2 &&
+          Math.abs(p.mesh.position.y - wall.position.y) < hy + 0.2 &&
+          Math.abs(p.mesh.position.z - wall.position.z) < hz + 0.2
+        ) {
+          if (wall.userData.destructible) {
+            this.world.damageBlock(wall, p.atk, p.mesh.position);
+          } else {
+            this.world.spawnHitSpark(p.mesh.position, 0x00ffff, 5);
+          }
+          if (p.isExplosive && p.mesh.position.distanceTo(pPos) <= 3.5) {
             player.receiveEnemyAttack(Math.round(p.atk * 0.7), p.mesh.position);
           }
+          this.scene.remove(p.mesh);
+          return false;
         }
+      }
+
+      if (p.life <= 0 || p.mesh.position.y <= 0) {
         this.scene.remove(p.mesh);
         return false;
       }
