@@ -108,7 +108,9 @@ export class EnemyManager {
 
     // スナイパーの場合は高所屋上（北西ビル屋上）からスタートさせる
     const spawnPos = arch.role === 'sniper'
-      ? new THREE.Vector3(-34, 19.5, -32)
+      ? (floor % 2 === 0
+          ? new THREE.Vector3(-34, 6.0, -32)
+          : new THREE.Vector3(-34, 19.5, -32))
       : rivalStart.clone();
 
     const rival = this.createRivalAgent({
