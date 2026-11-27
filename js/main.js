@@ -261,9 +261,31 @@ function updateHud(now) {
   cdExs.textContent = state.exsGauge >= EXS_GAUGE_MAX ? 'READY!!' : `${Math.floor(state.exsGauge)}%`;
   cdExs.style.color = state.exsGauge >= EXS_GAUGE_MAX ? '#00ffff' : '#a0aec0';
 
+  // スナイパースコープHUD更新
+  const scopeEl = document.getElementById('sniper-scope');
+  const scopeZoomLabel = document.getElementById('scope-zoom-label');
+  const scopeDistLabel = document.getElementById('scope-dist-label');
+  if (scopeEl) {
+    if (player.zoomLevel > 0) {
+      scopeEl.classList.remove('hidden');
+      const zoomTable = [1.0, 2.0, 4.0, 6.0];
+      scopeZoomLabel.textContent = `ZOOM ${zoomTable[player.zoomLevel].toFixed(1)}x`;
+      if (boss && boss.hp > 0) {
+        const dist = Math.round(player.root.position.distanceTo(boss.root.position));
+        scopeDistLabel.textContent = `DIST ${dist}m`;
+      } else {
+        scopeDistLabel.textContent = 'DIST --m';
+      }
+    } else {
+      scopeEl.classList.add('hidden');
+    }
+  }
+
   if (now < slowMoUntil) statusSpan.textContent = '⚡ 緊急回避スロー';
   else if (now < player.dodgeUntil) statusSpan.textContent = 'ステップ移動中';
+  else if (now < player.focusedShieldUntil) statusSpan.textContent = '🛡️ 集中シールド展開中';
   else if (now < player.trionShieldUntil) statusSpan.textContent = '🔷 シールド展開中';
+  else if (player.zoomLevel > 0) statusSpan.textContent = '🎯 スコープ照準中';
   else statusSpan.textContent = '戦闘待機';
 
   uiManager.updateMinimap(currentFloor);
