@@ -29,7 +29,7 @@ export class World {
     this.boxTex = this.createGridTexture('#0284c7', '#7dd3fc');
     this.initSharedMaterials();
   }
-  
+
   initSharedMaterials() {
     this.sharedMats = {
       wall: new THREE.MeshStandardMaterial({ map: this.buildingTex, roughness: 0.55 }),
@@ -44,7 +44,6 @@ export class World {
       })
     };
   }
-
 
   createGridTexture(bg, line) {
     const c = document.createElement('canvas');
@@ -146,6 +145,136 @@ export class World {
     return this.buildCityArena(floor);
   }
 
+  // ---- ボーダー本部基地（エリア0） ----
+  buildBase() {
+    this.portalLocked = false;
+    const wallMat = new THREE.MeshStandardMaterial({ map: this.wallTex, roughness: 0.5 });
+    const trimMat = new THREE.MeshStandardMaterial({
+      color: 0x0ea5e9,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.6
+    });
+
+    // 本部外周壁（40m x 40m）
+    const size = 40;
+    const half = size / 2;
+    const wallH = 6.5;
+    this.addSolidBox(0, wallH / 2, -half, size, wallH, 1.2, wallMat);
+    this.addSolidBox(0, wallH / 2, half, size, wallH, 1.2, wallMat);
+    this.addSolidBox(-half, wallH / 2, 0, 1.2, wallH, size, wallMat);
+    this.addSolidBox(half, wallH / 2, 0, 1.2, wallH, size, wallMat);
+
+    // 司令室・訓練場風の装飾柱とライン
+    [-12, 12].forEach((px) => {
+      [-12, 12].forEach((pz) => {
+        this.addSolidBox(px, wallH / 2, pz, 1.4, wallH, 1.4, wallMat);
+        this.addSolidBox(px, 2.2, pz, 1.5, 0.25, 1.5, trimMat, {}, false);
+      });
+    });
+
+    // 訓練用サンドバッグ（破壊テスト可能なトリオンブロック）
+    this.addDestructibleBlock(-6, HALF, -6, 0x38bdf8, 60);
+    this.addDestructibleBlock(-6, HALF + BOX_SIZE, -6, 0x38bdf8, 60);
+    this.addDestructibleBlock(6, HALF, -6, 0x38bdf8, 60);
+
+    // 高台ジャンプ訓練足場
+    this.addSolidBox(-13, 1.6, 8, 5.5, 3.2, 5.5, wallMat);
+    this.addSolidBox(-13, 3.3, 8, 5.7, 0.2, 5.7, trimMat, {}, false);
+
+    // トリガー調整端末（Fキーでトリガー編成を開くオブジェクト）
+    const termGroup = new THREE.Group();
+    const baseMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 1.2, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4 })
+    );
+    baseMesh.position.y = 0.6;
+    termGroup.add(baseMesh);
+
+    const screenMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 0.85, 0.1),
+      new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.9
+      })
+    );
+    screenMesh.position.set(0, 1.45, 0.25);
+    screenMesh.rotation.x = -0.35;
+    termGroup.add(screenMesh);
+
+    termGroup.position.set(6, 0, 8);
+    this.scene.add(termGroup);
+    this.dungeonMeshes.push(termGroup);
+
+    this.interactables.push({
+      type: 'trigger_terminal',
+      pos: new THREE.Vector3(6, 1.0, 8),
+      radius: 3.0,
+      label: '[F] トリガー構成端末'
+    });
+
+    // 模擬戦フィールドへの転送ゲート
+    this.createPortal(0, 1.8, -14, false);
+
+    return {
+      spawnPos: new THREE.Vector3(0, 0, 12),
+      enemySpawns: []
+    };
+  }
+
+  // ---- ワールドトリガー風 市街地ランク戦フィールド（エリア1以上） ----
+  buildCityArena(floor) {
+    this.portalLocked = true;
+    const arenaHalf = 66;
+    const wallH = 12;
+    const wallMat = this.sharedMats.wall;
+
+    // フィールド外周の境界バリア壁（132m x 132m）
+    this.addSolidBox(0, wallH / 2, -arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
+    this.addSolidBox(0, wallH / 2, arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
+    this.addSolidBox(-arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
+    this.addSolidBox(arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
+
+    // 5棟の大型進入可能ビルを配置（中央商業モール3階建て＋四隅の2〜3階建てビル）
+    this.buildEnterableBuilding(0, 0, 3, 28, true);
+    this.buildEnterableBuilding(-34, -32, 3, 24, false);
+    this.buildEnterableBuilding(34, -32, 2, 24, false);
+    this.buildEnterableBuilding(-34, 32, 2, 24, false);
+    this.buildEnterableBuilding(34, 32, 3, 24, false);
+
+    // 道路上の遮蔽物・連絡歩道橋・破壊可能コンテナ
+    const coverLocations = [
+      [-18, 0], [18, 0], [0, -22], [0, 22],
+      [-22, -16], [22, -16], [-22, 16], [22, 16]
+    ];
+    coverLocations.forEach(([cx, cz]) => {
+      this.addDestructibleBlock(cx, HALF, cz, 0x0284c7, 50);
+      this.addDestructibleBlock(cx + BOX_SIZE, HALF, cz, 0x0284c7, 50);
+    });
+
+    // 北側広場に次エリアへの転送ゲート（最初はロック状態、撃破後に解除）
+    this.createPortal(0, 1.8, -54, true);
+
+    // プレイヤーと敵AIのスポーン座標（建物に埋まらない道路上の安全地点）
+    const spawnPos = new THREE.Vector3(0, 0, 52);
+    const candidateSpawns = [
+      new THREE.Vector3(-48, 0, -48),
+      new THREE.Vector3(48, 0, -48),
+      new THREE.Vector3(-48, 0, 0),
+      new THREE.Vector3(48, 0, 0),
+      new THREE.Vector3(0, 0, -46),
+      new THREE.Vector3(-18, 0, -34),
+      new THREE.Vector3(18, 0, -34),
+      new THREE.Vector3(-34, 13.1, -32), // 北西ビル屋上狙撃手
+      new THREE.Vector3(34, 13.1, 32)    // 南東ビル屋上狙撃手
+    ];
+
+    return {
+      spawnPos,
+      enemySpawns: candidateSpawns
+    };
+  }
+
   // addSolidBox に castShadow オプションを追加（デフォルトは大きな構造物のみ影を落とす）
   addSolidBox(cx, cy, cz, w, h, d, mat, extraData = {}, castShadow = true) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -165,7 +294,31 @@ export class World {
     return mesh;
   }
 
-  // ---- 折り返し階段（ソリッド段差・踊り場付き・絶対に詰まらない構造） ----
+  addDestructibleBlock(cx, cy, cz, colorHex = 0x38bdf8, hp = 50) {
+    const mat = new THREE.MeshStandardMaterial({
+      map: this.boxTex,
+      color: colorHex,
+      roughness: 0.4
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(BOX_SIZE, BOX_SIZE, BOX_SIZE), mat);
+    mesh.position.set(cx, cy, cz);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.userData = {
+      halfX: HALF,
+      halfY: HALF,
+      halfZ: HALF,
+      destructible: true,
+      hp,
+      maxHp: hp
+    };
+    this.scene.add(mesh);
+    this.walls.push(mesh);
+    this.destructibles.push(mesh);
+    this.dungeonMeshes.push(mesh);
+    return mesh;
+  }
+
   // ---- 折り返し階段（ソリッド段差・踊り場付き・絶対に詰まらない構造） ----
   buildSwitchbackStaircase(cx, cz, baseY, floorH, stairMat, railMat) {
     const totalW = 6.6;
@@ -358,5 +511,172 @@ export class World {
 
     this.addSolidBox(cx - halfS + 3.5, roofY + 1.1, cz - halfS + 3.5, 2.8, 2.2, 2.2, railMat);
     this.addDestructibleBlock(cx - halfS + 3.5, roofY + HALF, cz + halfS - 3.5, 0x38bdf8, 55);
+  }
+
+  // ---- 転送ゲート（ポータル）生成・解除 ----
+  createPortal(x, y, z, locked = false) {
+    this.portalPos.set(x, y, z);
+    this.portalLocked = locked;
+
+    const coreColor = locked ? 0xef4444 : 0x38bdf8;
+    const coreGeo = new THREE.OctahedronGeometry(0.95, 1);
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: coreColor,
+      emissive: coreColor,
+      emissiveIntensity: 0.9,
+      wireframe: false
+    });
+    this.portalMesh = new THREE.Mesh(coreGeo, coreMat);
+    this.portalMesh.position.copy(this.portalPos);
+    this.scene.add(this.portalMesh);
+
+    const ringGeo = new THREE.TorusGeometry(1.65, 0.1, 10, 32);
+    const ringMat = new THREE.MeshBasicMaterial({ color: coreColor });
+    this.portalRing = new THREE.Mesh(ringGeo, ringMat);
+    this.portalRing.position.copy(this.portalPos);
+    this.scene.add(this.portalRing);
+  }
+
+  unlockPortal() {
+    if (!this.portalLocked) return;
+    this.portalLocked = false;
+    if (this.portalMesh) {
+      this.portalMesh.material.color.setHex(0x38bdf8);
+      this.portalMesh.material.emissive.setHex(0x38bdf8);
+    }
+    if (this.portalRing) {
+      this.portalRing.material.color.setHex(0x38bdf8);
+    }
+    this.onToast('全敵部隊ベイルアウト！北側転送ゲートが起動しました');
+  }
+
+  // ---- 破壊可能トリオンブロックのダメージ・破壊処理 ----
+  damageWall(wallMesh, dmg, hitPoint) {
+    if (!wallMesh || !wallMesh.userData || !wallMesh.userData.destructible) return;
+    wallMesh.userData.hp -= dmg;
+    this.spawnWallSparks(hitPoint || wallMesh.position, 0x38bdf8);
+
+    if (wallMesh.userData.hp <= 0) {
+      this.spawnWallSparks(wallMesh.position, 0x7dd3fc, 14);
+      this.scene.remove(wallMesh);
+      this.walls = this.walls.filter((w) => w !== wallMesh);
+      this.destructibles = this.destructibles.filter((w) => w !== wallMesh);
+      this.dungeonMeshes = this.dungeonMeshes.filter((w) => w !== wallMesh);
+    } else {
+      const ratio = Math.max(0.2, wallMesh.userData.hp / wallMesh.userData.maxHp);
+      wallMesh.material.opacity = 0.4 + ratio * 0.6;
+      wallMesh.material.transparent = true;
+    }
+  }
+
+  spawnWallSparks(pos, colorHex = 0x38bdf8, count = 7) {
+    for (let i = 0; i < count; i++) {
+      const p = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.16, 0.16),
+        new THREE.MeshBasicMaterial({ color: colorHex })
+      );
+      p.position.copy(pos);
+      this.scene.add(p);
+      this.sparks.push({
+        mesh: p,
+        vel: new THREE.Vector3(
+          (Math.random() - 0.5) * 8,
+          Math.random() * 6 + 2,
+          (Math.random() - 0.5) * 8
+        ),
+        life: 0.45
+      });
+    }
+  }
+
+  update(dt, playerPos) {
+    // ポータル回転演出
+    if (this.portalMesh) {
+      this.portalMesh.rotation.y += dt * 1.8;
+      this.portalMesh.rotation.x += dt * 0.9;
+    }
+    if (this.portalRing) {
+      this.portalRing.rotation.z -= dt * 1.4;
+    }
+
+    // 破壊火花パーティクル更新
+    for (let i = this.sparks.length - 1; i >= 0; i--) {
+      const s = this.sparks[i];
+      s.vel.y -= 18 * dt;
+      s.mesh.position.addScaledVector(s.vel, dt);
+      s.life -= dt;
+      if (s.life <= 0) {
+        this.scene.remove(s.mesh);
+        this.sparks.splice(i, 1);
+      }
+    }
+
+    // インタラクト（端末）接近チェック
+    let nearInteractable = null;
+    if (playerPos) {
+      for (const item of this.interactables) {
+        if (playerPos.distanceTo(item.pos) <= item.radius) {
+          nearInteractable = item;
+          break;
+        }
+      }
+    }
+
+    // 転送ゲート到達判定
+    let enteredPortal = false;
+    if (this.portalMesh && !this.portalLocked && playerPos) {
+      const dx = playerPos.x - this.portalPos.x;
+      const dz = playerPos.z - this.portalPos.z;
+      const dy = Math.abs(playerPos.y - (this.portalPos.y - 1.5));
+      if (Math.hypot(dx, dz) < 2.2 && dy < 2.5) {
+        enteredPortal = true;
+      }
+    }
+
+    return { nearInteractable, enteredPortal };
+  }
+
+  // ---- エンティティ（敵AI・射撃）用の衝突・段差登坂・地面高さ判定 ----
+  isBlockedForEntity(x, z, radius = 0.5, entityY = 0) {
+    const stepUpAllowance = 0.72;
+    const feet = entityY + stepUpAllowance;
+    const head = entityY + 2.0;
+    for (const wall of this.walls) {
+      const hx = wall.userData.halfX || HALF;
+      const hy = wall.userData.halfY || HALF;
+      const hz = wall.userData.halfZ || HALF;
+      if (
+        x > wall.position.x - hx - radius &&
+        x < wall.position.x + hx + radius &&
+        z > wall.position.z - hz - radius &&
+        z < wall.position.z + hz + radius
+      ) {
+        if (feet < wall.position.y + hy && head > wall.position.y - hy) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  getGroundHeightAt(x, z, currentY = 0) {
+    let groundY = 0;
+    for (const wall of this.walls) {
+      const hx = wall.userData.halfX || HALF;
+      const hy = wall.userData.halfY || HALF;
+      const hz = wall.userData.halfZ || HALF;
+      if (
+        x > wall.position.x - hx - 0.45 &&
+        x < wall.position.x + hx + 0.45 &&
+        z > wall.position.z - hz - 0.45 &&
+        z < wall.position.z + hz + 0.45
+      ) {
+        const top = wall.position.y + hy;
+        if (currentY >= top - 0.75) {
+          groundY = Math.max(groundY, top);
+        }
+      }
+    }
+    return groundY;
   }
 }
