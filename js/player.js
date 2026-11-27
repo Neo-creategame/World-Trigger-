@@ -1073,6 +1073,7 @@ export class Player {
   }
 
   updateCamera(dt) {
+    // スナイパースコープ倍率に応じたカメラFOVと距離の切り替え
     const targetFovs = [65, 34, 18, 11];
     const targetFov = targetFovs[this.zoomLevel] || 65;
     if (Math.abs(this.camera.fov - targetFov) > 0.2) {
@@ -1090,15 +1091,8 @@ export class Player {
     // スコープ展開中は肩越し（一人称に近い位置）へカメラを寄せる
     const baseCamDist = this.zoomLevel > 0 ? 0.6 : this.camDist;
     let safeDist = baseCamDist;
-    const focus = this.root.position.clone().add(new THREE.Vector3(0, 1.5, 0));
-    const dir = new THREE.Vector3(
-      Math.sin(this.yaw) * Math.cos(this.pitch),
-      Math.sin(this.pitch),
-      Math.cos(this.yaw) * Math.cos(this.pitch)
-    ).normalize();
 
     // 建物内部・壁際でカメラが壁の裏にめり込まないよう距離を自動調整
-    let safeDist = baseCamDist;
     for (let d = 1.2; d <= baseCamDist; d += 0.4) {
       const testPos = focus.clone().addScaledVector(dir, d);
       let blocked = false;
@@ -1129,6 +1123,11 @@ export class Player {
       desiredPos.y += (Math.random() - 0.5) * this.shakeIntensity;
       desiredPos.z += (Math.random() - 0.5) * this.shakeIntensity;
     }
+
+    this.camera.position.lerp(desiredPos, this.zoomLevel > 0 ? 0.6 : 0.25);
+    const lookTarget = focus.clone().addScaledVector(dir, -12);
+    this.camera.lookAt(lookTarget);
+  }
 
     this.camera.position.lerp(desiredPos, 0.38);
     this.camera.lookAt(focus);
