@@ -102,6 +102,10 @@ export class World {
   }
 
   clearDungeon() {
+    if (this.scene) {
+      this.scene.background = new THREE.Color(0x0b1120);
+      if (this.scene.fog) this.scene.fog.color.setHex(0x0b1120);
+    }
     for (const m of this.dungeonMeshes) this.scene.remove(m);
     this.dungeonMeshes = [];
 
@@ -137,6 +141,9 @@ export class World {
 
     if (floor === 0) {
       return this.buildBase();
+    }
+    if (floor % 2 === 0) {
+      return this.buildResidentialArena(floor);
     }
     return this.buildCityArena(floor);
   }
@@ -362,6 +369,181 @@ export class World {
       new THREE.Vector3(48, 0, 0),
       new THREE.Vector3(-34, 19.5, -32), // 北西ビル屋上スポーン
       new THREE.Vector3(34, 19.5, 32)    // 南東ビル屋上スポーン
+    ];
+    const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
+
+    return {
+      playerStart,
+      rivalStart,
+      spawnPos: playerStart,
+      enemySpawns: candidateSpawns
+    };
+  }
+  // ---- 進入不可の戸建て住宅（屋根の上にグラスホッパーで登れる） ----
+  buildClosedHouse(cx, cz, w = 8.5, d = 7.5, stories = 2, wallColor = 0xe2e8f0, roofColor = 0x334155) {
+    const wallH = stories === 2 ? 5.6 : 3.2;
+    const houseWallMat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 0.65 });
+    const roofMat = new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.5 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.5 });
+
+    // 建物本体（中に入れないソリッドブロック）
+    this.addSolidBox(cx, wallH / 2, cz, w, wallH, d, houseWallMat);
+
+    // 軒先・陸屋根スラブ（屋根の上を歩ける）
+    this.addSolidBox(cx, wallH + 0.18, cz, w + 0.6, 0.36, d + 0.6, roofMat);
+
+    // 2階建ての場合は屋上パラペット（手すり縁）と室外機遮蔽物を追加
+    if (stories === 2) {
+      const pY = wallH + 0.55;
+      this.addSolidBox(cx, pY, cz - d / 2 - 0.15, w + 0.6, 0.4, 0.25, trimMat, {}, false);
+      this.addSolidBox(cx, pY, cz + d / 2 + 0.15, w + 0.6, 0.4, 0.25, trimMat, {}, false);
+      // 屋上の空調室外機（スナイパーの伏せ遮蔽物）
+      this.addSolidBox(cx - w * 0.25, wallH + 0.8, cz, 1.4, 0.9, 1.0, trimMat, {}, false);
+    }
+
+    // 住宅を囲む破壊可能なブロック塀（高さ1.3m：しゃがみ・遮蔽に最適）
+    const fenceMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.7 });
+    const fenceOffsetZ = d / 2 + 1.1;
+    this.addDestructibleProp(cx - w * 0.28, 0.65, cz + fenceOffsetZ, w * 0.42, 1.3, 0.3, 0x94a3b8, 45);
+    this.addDestructibleProp(cx + w * 0.28, 0.65, cz + fenceOffsetZ, w * 0.42, 1.3, 0.3, 0x94a3b8, 45);
+  }
+
+  // ---- B級ランク戦最終マッチ風：夕暮れの住宅街＆河川敷マップ ----
+  buildResidentialArena(floor) {
+    this.portalLocked = true;
+
+    // 夕暮れ〜薄暮の空とフォグ（B級ランク戦最終戦の雰囲気）
+    const duskColor = 0x2b1d38;
+    this.scene.background = new THREE.Color(duskColor);
+    if (this.scene.fog) {
+      this.scene.fog.color.setHex(duskColor);
+    }
+
+    const arenaHalf = 66;
+    const wallH = 11;
+    const wallMat = this.sharedMats.wall;
+
+    // フィールド外周の境界バリア壁（132m x 132m）
+    this.addSolidBox(0, wallH / 2, -arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
+    this.addSolidBox(0, wallH / 2, arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
+    this.addSolidBox(-arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
+    this.addSolidBox(arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
+
+    // 1. 南側エリア（z = +26 ~ +54）：河川敷＆水路・2本の橋（開けた射撃戦エリア）
+    const waterMat = new THREE.MeshStandardMaterial({
+      color: 0x0f2942,
+      emissive: 0x0284c7,
+      emissiveIntensity: 0.18,
+      roughness: 0.2
+    });
+    const grassMat = new THREE.MeshStandardMaterial({ color: 0x263829, roughness: 0.85 });
+    const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.55 });
+
+    // 川の水面（z = +38 付近を東西に横断）
+    const riverMesh = new THREE.Mesh(new THREE.PlaneGeometry(130, 12), waterMat);
+    riverMesh.rotation.x = -Math.PI / 2;
+    riverMesh.position.set(0, 0.04, 38);
+    this.scene.add(riverMesh);
+    this.dungeonMeshes.push(riverMesh);
+
+    // 河川敷の緑地帯
+    const bankNorth = new THREE.Mesh(new THREE.PlaneGeometry(130, 10), grassMat);
+    bankNorth.rotation.x = -Math.PI / 2;
+    bankNorth.position.set(0, 0.03, 27);
+    this.scene.add(bankNorth);
+    this.dungeonMeshes.push(bankNorth);
+
+    const bankSouth = new THREE.Mesh(new THREE.PlaneGeometry(130, 18), grassMat);
+    bankSouth.rotation.x = -Math.PI / 2;
+    bankSouth.position.set(0, 0.03, 53);
+    this.scene.add(bankSouth);
+    this.dungeonMeshes.push(bankSouth);
+
+    // 川に架かる2本のコンクリート橋（西橋 x=-26 / 東橋 x=+26）
+    [-26, 26].forEach((bx) => {
+      this.addSolidBox(bx, 0.35, 38, 6.5, 0.7, 15.0, bridgeMat, {}, false);
+      this.addGuardRail(bx - 3.0, 34.5, false);
+      this.addGuardRail(bx - 3.0, 41.5, false);
+      this.addGuardRail(bx + 3.0, 34.5, false);
+      this.addGuardRail(bx + 3.0, 41.5, false);
+    });
+
+    // 2. 北〜中央エリア（z = -56 ~ +20）：密集した戸建て住宅街区画（4ブロック × 各4〜5棟）
+    const housePalette = [0xe2e8f0, 0xcbd5e1, 0xd6d3d1, 0x94a3b8];
+    const roofPalette = [0x1e293b, 0x334155, 0x3f2e3e, 0x1e3a5f];
+
+    const houseSpecs = [
+      // 北西ブロック（x: -54 ~ -12, z: -52 ~ -22）
+      { x: -48, z: -48, w: 9.0, d: 8.0, s: 2 },
+      { x: -34, z: -48, w: 8.5, d: 7.5, s: 2 },
+      { x: -20, z: -48, w: 8.5, d: 8.0, s: 1 },
+      { x: -48, z: -32, w: 8.5, d: 7.5, s: 1 },
+      { x: -34, z: -32, w: 9.5, d: 8.5, s: 2 }, // 高台スナイプ拠点
+      { x: -20, z: -32, w: 8.0, d: 7.5, s: 2 },
+
+      // 北東ブロック（x: +12 ~ +54, z: -52 ~ -22）
+      { x: 20, z: -48, w: 8.5, d: 8.0, s: 2 },
+      { x: 34, z: -48, w: 9.0, d: 7.5, s: 1 },
+      { x: 48, z: -48, w: 8.5, d: 8.0, s: 2 },
+      { x: 20, z: -32, w: 8.0, d: 7.5, s: 2 },
+      { x: 34, z: -32, w: 9.5, d: 8.5, s: 2 }, // 東側高台拠点
+      { x: 48, z: -32, w: 8.5, d: 7.5, s: 1 },
+
+      // 中央西ブロック（x: -54 ~ -12, z: -12 ~ +16）
+      { x: -48, z: -10, w: 8.5, d: 7.5, s: 2 },
+      { x: -34, z: -10, w: 8.0, d: 7.5, s: 1 },
+      { x: -20, z: -10, w: 9.0, d: 8.0, s: 2 },
+      { x: -48, z: 8,   w: 9.0, d: 8.0, s: 1 },
+      { x: -34, z: 8,   w: 8.5, d: 7.5, s: 2 },
+      { x: -20, z: 8,   w: 8.0, d: 7.5, s: 1 },
+
+      // 中央東ブロック（x: +12 ~ +54, z: -12 ~ +16）
+      { x: 20, z: -10, w: 9.0, d: 8.0, s: 2 },
+      { x: 34, z: -10, w: 8.0, d: 7.5, s: 1 },
+      { x: 48, z: -10, w: 8.5, d: 7.5, s: 2 },
+      { x: 20, z: 8,   w: 8.0, d: 7.5, s: 1 },
+      { x: 34, z: 8,   w: 8.5, d: 7.5, s: 2 },
+      { x: 48, z: 8,   w: 9.0, d: 8.0, s: 1 }
+    ];
+
+    houseSpecs.forEach((h, idx) => {
+      const wc = housePalette[idx % housePalette.length];
+      const rc = roofPalette[idx % roofPalette.length];
+      this.buildClosedHouse(h.x, h.z, h.w, h.d, h.s, wc, rc);
+    });
+
+    // 3. 中央大通り（x = 0）＆ 東西幹線道路（z = -21）の破壊可能遮蔽物
+    // 路上駐車車両・自販機・ガードレール・トリオンコンテナ
+    this.addDestructibleCar(-6.5, -40, true, 0x334155);
+    this.addDestructibleCar(6.5, -26, true, 0x1e3a8a);
+    this.addDestructibleCar(-6.5, -2, true, 0x475569);
+    this.addDestructibleCar(6.5, 14, true, 0x0f172a);
+    this.addDestructibleCar(-28, -21, false, 0x334155);
+    this.addDestructibleCar(28, -21, false, 0x1e293b);
+
+    // 角地の自動販売機（曲射バイパーや隠密の目印）
+    this.addVendingMachine(-13.5, -25.5, 0x0ea5e9);
+    this.addVendingMachine(13.5, -25.5, 0xef4444);
+    this.addVendingMachine(-13.5, 14.5, 0x38bdf8);
+    this.addVendingMachine(13.5, 14.5, 0x0ea5e9);
+
+    // 河川敷沿いのガードレール
+    [-44, -14, 0, 14, 44].forEach((gx) => {
+      this.addGuardRail(gx, 22.5, true);
+    });
+
+    // 北側大通りの奥に次エリアへの転送ゲート
+    this.createPortal(0, 1.8, -58, true);
+
+    // 南側河川敷からスタート（橋を渡って住宅街へ突入する展開）
+    const playerStart = new THREE.Vector3(0, 0, 54);
+    const candidateSpawns = [
+      new THREE.Vector3(0, 0, -48),      // 北側大通り
+      new THREE.Vector3(-42, 0, -21),    // 西側路地
+      new THREE.Vector3(42, 0, -21),     // 東側路地
+      new THREE.Vector3(-34, 6.0, -32),  // 北西2階建て住宅の屋根上（スナイパー高台）
+      new THREE.Vector3(34, 6.0, -32),   // 北東2階建て住宅の屋根上
+      new THREE.Vector3(-20, 6.0, -10)   // 中央西2階建て住宅の屋根上
     ];
     const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
 
