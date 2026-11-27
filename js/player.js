@@ -744,30 +744,49 @@ export class Player {
   }
 
   fireProjectile(angleOffset, dmg, color = 0x00ffff, opts = {}) {
-    const ang = this.yaw + angleOffset;
-    const pitchFactor = Math.max(-0.3, Math.min(0.5, -this.pitch + 0.15));
+    let dir;
+    let spawnPos;
 
-    const dir = new THREE.Vector3(
-      -Math.sin(ang) * Math.cos(pitchFactor),
-      Math.sin(pitchFactor),
-      -Math.cos(ang) * Math.cos(pitchFactor)
-    ).normalize();
+    if (this.zoomLevel > 0 && !opts.isMeteoraBomb && !opts.isViperArc) {
+      // スコープ展開中：カメラの中心（レティクルの十字線）から視線の真正面へ正確に発射
+      dir = new THREE.Vector3();
+      this.camera.getWorldDirection(dir);
+      if (angleOffset !== 0) {
+        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), angleOffset);
+      }
+      dir.normalize();
+      spawnPos = this.camera.position.clone().addScaledVector(dir, 0.45);
+    } else {
+      // 通常三人称視点：カメラが注視しているターゲット点に向かって発射し、クロスヘアと着弾点を一致させる
+      const camDir = new THREE.Vector3();
+      this.camera.getWorldDirection(camDir);
+      const aimTarget = this.camera.position.clone().addScaledVector(camDir, 45);
+
+      spawnPos = opts.originPos
+        ? opts.originPos.clone()
+        : this.root.position.clone().add(new THREE.Vector3(0, 1.45, 0));
+
+      dir = aimTarget.sub(spawnPos).normalize();
+      if (angleOffset !== 0) {
+        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), angleOffset);
+      }
+      if (!opts.originPos) {
+        spawnPos.addScaledVector(dir, 0.8);
+      }
+    }
 
     const radius = opts.projRadius || 0.18;
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 8, 8),
       new THREE.MeshBasicMaterial({ color })
     );
-    if (opts.originPos) {
-      mesh.position.copy(opts.originPos);
-    } else {
-      mesh.position.copy(this.root.position).add(new THREE.Vector3(0, 1.3, 0)).addScaledVector(dir, 0.8);
-    }
+    mesh.position.copy(spawnPos);
     this.scene.add(mesh);
 
     const spd = opts.speedOverride || 1.0;
     let initVel;
     if (opts.isMeteoraBomb) {
+      const ang = this.yaw + angleOffset;
       const elev = Math.max(0.25, Math.min(1.05, 0.55 - this.pitch * 0.55));
       const v0 = opts.speedOverride || 1.15;
       const horizDir = new THREE.Vector3(-Math.sin(ang), 0, -Math.cos(ang)).normalize();
