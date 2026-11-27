@@ -18,6 +18,7 @@ export class Player {
     this.onNextFloor = callbacks.onNextFloor || (() => {});
     this.onBailout = callbacks.onBailout || callbacks.onDeath || (() => {});
     this.onSlowMo = callbacks.onSlowMo || (() => {});
+    this.onDamagePopup = callbacks.onDamagePopup || (() => {});
     this.isUiOpen = callbacks.isUiOpen || (() => false);
 
     // 現在トリオン量（旧 hp）
@@ -27,6 +28,7 @@ export class Player {
     // トリガー用状態管理
     this.trionShieldUntil = 0;
     this.trionShieldReduce = 0;
+    this.focusedShieldUntil = 0;
     this.zoomLevel = 0;
     this.radarUntil = 0;
     this.radarAtkMult = 1.0;
@@ -980,6 +982,11 @@ export class Player {
     if (this.focusedShieldMesh) {
       if (now < this.focusedShieldUntil) {
         this.focusedShieldMesh.visible = true;
+        this.focusedShieldMesh.position.set(
+          -Math.sin(this.yaw) * 1.15,
+          1.25,
+          -Math.cos(this.yaw) * 1.15
+        );
         this.focusedShieldMesh.rotation.y = this.yaw;
       } else {
         this.focusedShieldMesh.visible = false;
@@ -1128,3 +1135,4 @@ export class Player {
     const lookTarget = focus.clone().addScaledVector(dir, -12);
     this.camera.lookAt(lookTarget);
   }
+}
