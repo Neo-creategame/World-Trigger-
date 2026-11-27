@@ -27,6 +27,7 @@ export class Player {
     // トリガー用状態管理
     this.trionShieldUntil = 0;
     this.trionShieldReduce = 0;
+    this.zoomLevel = 0;
     this.radarUntil = 0;
     this.radarAtkMult = 1.0;
     this.shieldBubbleMesh = null;
@@ -106,20 +107,41 @@ export class Player {
     this.bladeMesh.position.set(0, 0.65, -0.2);
     this.bladeMesh.rotation.x = -0.35;
     this.swordPivot.add(this.bladeMesh);
+    // スナイパーライフル（イーグレット用）
+    this.rifleMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.14, 1.85),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: 0x0ea5e9, emissiveIntensity: 0.45 })
+    );
+    this.rifleMesh.position.set(0.35, 1.35, -0.75);
+    this.rifleMesh.visible = false;
+    this.model.add(this.rifleMesh);
+
+    // 集中シールド（正面一点の小型高耐久パネル）
+    this.focusedShieldMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1.35, 1.55, 0.12),
+      new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.55 })
+    );
+    this.focusedShieldMesh.position.set(0, 1.25, -1.15);
+    this.focusedShieldMesh.visible = false;
+    this.root.add(this.focusedShieldMesh);
   }
 
   // セット中の通常攻撃トリガーに合わせてブレードの見た目・色を切り替え
   syncTriggerVisual() {
     if (!this.bladeMesh) return;
     const normalId = TRIGGER_SLOTS.normal || 'kogetsu';
-    if (normalId === 'asteroid') {
+    if (this.rifleMesh) this.rifleMesh.visible = normalId === 'egret';
+    if (normalId !== 'egret' && this.zoomLevel > 0) {
+      this.zoomLevel = 0;
+    }
+
+    if (normalId === 'asteroid' || normalId === 'egret') {
       this.bladeMesh.visible = false;
     } else if (normalId === 'raygust') {
       this.bladeMesh.visible = true;
       this.bladeMat.emissive.setHex(0x38bdf8);
       this.bladeMesh.scale.set(2.2, 1.15, 1.6);
     } else {
-      // 弧月
       this.bladeMesh.visible = true;
       this.bladeMat.emissive.setHex(0x48bb78);
       this.bladeMesh.scale.set(1.0, 1.1, 1.0);
@@ -210,14 +232,24 @@ export class Player {
       if (e.code === 'Digit1') this.triggerOptSlot(0);
       if (e.code === 'Digit2') this.triggerOptSlot(1);
       if (e.code === 'Digit3') this.triggerOptSlot(2);
+      if (e.code === 'KeyC') {
+        if ((TRIGGER_SLOTS.normal || 'kogetsu') === 'egret') {
+          this.zoomLevel = (this.zoomLevel + 1) % 4;
+          const labels = ['解除', '2.0倍', '4.0倍', '6.0倍'];
+          this.onToast(`🎯 スコープ倍率: ${labels[this.zoomLevel]}`);
+        } else {
+          this.onToast('🎯 スコープズームは「イーグレット」装備中に [C] キーで使用可能');
+        }
+      }
     });
 
     window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
 
     window.addEventListener('mousemove', (e) => {
       if (!this.isUiOpen() && document.pointerLockElement === document.body) {
-        this.yaw -= e.movementX * 0.0025;
-        this.pitch += e.movementY * 0.0022;
+        const sensScale = [1.0, 0.55, 0.32, 0.20][this.zoomLevel] || 1.0;
+        this.yaw -= e.movementX * 0.0025 * sensScale;
+        this.pitch += e.movementY * 0.0022 * sensScale;
         this.pitch = Math.max(-0.35, Math.min(1.15, this.pitch));
       }
     });
@@ -265,12 +297,22 @@ export class Player {
     }
 
     let dmg = Math.max(1, Math.round(rawAtk));
+    if (now < this.focusedShieldUntil && attackerPos) {
+      const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
+      const toAttacker = attackerPos.clone().sub(this.root.position).setY(0).normalize();
+      if (forward.dot(toAttacker) > 0.45) {
+        dmg = Math.max(1, Math.round(dmg * 0.10));
+        this.world.spawnHitSpark(this.root.position.clone().add(new THREE.Vector3(0, 1.25, 0)).addScaledVector(forward, 1.1), 0x00ffff, 12);
+        this.onToast('🛡️ 集中シールドで直撃を防御！');
+      }
+    }
 
     // シールドトリガー展開中のダメージ軽減
     if (now < this.trionShieldUntil && this.trionShieldReduce > 0) {
       dmg = Math.max(1, Math.round(dmg * (1 - this.trionShieldReduce)));
       this.world.spawnHitSpark(this.root.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 0x00ffff);
     }
+    
 
     this.trion = Math.max(0, this.trion - dmg);
     this.invulnUntil = now + 650;
@@ -323,8 +365,18 @@ export class Player {
     const lv = (state.ownedTriggers && state.ownedTriggers[id]) || 1;
     const dmg = Math.round(atkTotal() * this.getTriggerPowerMult(id));
     this.model.rotation.y = this.yaw;
-
-    if (id === 'asteroid') {
+    
+    if (id === 'egret') {
+      // イーグレット：超長射程・超高速スナイパーライフル
+      this.addCameraShake(0.14, 0.10);
+      const zoomBonus = this.zoomLevel > 0 ? 1.25 : 1.0;
+      this.fireProjectile(0, Math.round(dmg * 2.45 * zoomBonus), 0x00ffff, {
+        projRadius: 0.16,
+        speedOverride: 2.6,
+        maxDist: 95,
+        attackCategory: 'ranged'
+      });
+    } else if (id === 'asteroid') {
       const shots = 3 + Math.min(2, Math.floor((lv - 1) / 3));
       this.chargeAndFireTrionCube(0x00ffff, 'right', (cubePos, subPositions) => {
         for (let idx = 0; idx < shots; idx++) {
@@ -517,6 +569,10 @@ export class Player {
       }
       this.shieldBubbleMesh.visible = true;
       this.onToast(`🔷 シールド展開（被ダメ${Math.round(this.trionShieldReduce * 100)}%軽減）`);
+    } else if (id === 'focused_shield') {
+      this.focusedShieldUntil = now + 4000 + Math.min(2000, (lv - 1) * 250);
+      if (this.focusedShieldMesh) this.focusedShieldMesh.visible = true;
+      this.onToast('🛡️ 集中シールド展開（正面の攻撃を90%カット！）');
     } else if (id === 'teleporter') {
       const moveDir = this.getInputMoveDirection();
       const dir = moveDir.lengthSq() > 0
@@ -916,6 +972,15 @@ export class Player {
         this.trion = Math.min(mTrion, this.trion + heal);
       }
     }
+    // 集中シールドの向きをカメラの向きに追従
+    if (this.focusedShieldMesh) {
+      if (now < this.focusedShieldUntil) {
+        this.focusedShieldMesh.visible = true;
+        this.focusedShieldMesh.rotation.y = this.yaw;
+      } else {
+        this.focusedShieldMesh.visible = false;
+      }
+    }
 
     // シールドトリガー視覚効果の更新
     if (this.shieldBubbleMesh) {
@@ -1004,6 +1069,23 @@ export class Player {
   }
 
   updateCamera(dt) {
+    const targetFovs = [65, 34, 18, 11];
+    const targetFov = targetFovs[this.zoomLevel] || 65;
+    if (Math.abs(this.camera.fov - targetFov) > 0.2) {
+      this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFov, 0.35);
+      this.camera.updateProjectionMatrix();
+    }
+
+    const focus = this.root.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+    const dir = new THREE.Vector3(
+      Math.sin(this.yaw) * Math.cos(this.pitch),
+      Math.sin(this.pitch),
+      Math.cos(this.yaw) * Math.cos(this.pitch)
+    ).normalize();
+
+    // スコープ展開中は肩越し（一人称に近い位置）へカメラを寄せる
+    const baseCamDist = this.zoomLevel > 0 ? 0.6 : this.camDist;
+    let safeDist = baseCamDist;
     const focus = this.root.position.clone().add(new THREE.Vector3(0, 1.5, 0));
     const dir = new THREE.Vector3(
       Math.sin(this.yaw) * Math.cos(this.pitch),
@@ -1012,8 +1094,8 @@ export class Player {
     ).normalize();
 
     // 建物内部・壁際でカメラが壁の裏にめり込まないよう距離を自動調整
-    let safeDist = this.camDist;
-    for (let d = 1.2; d <= this.camDist; d += 0.4) {
+    let safeDist = baseCamDist;
+    for (let d = 1.2; d <= baseCamDist; d += 0.4) {
       const testPos = focus.clone().addScaledVector(dir, d);
       let blocked = false;
       for (const wall of this.world.walls) {
