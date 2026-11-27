@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { saveGame } from './save.js';
 
 const BOX_SIZE = 1.6;
 const HALF = BOX_SIZE / 2;
@@ -181,7 +180,37 @@ export class World {
     this.addSolidBox(-13, 1.6, 8, 5.5, 3.2, 5.5, wallMat);
     this.addSolidBox(-13, 3.3, 8, 5.7, 0.2, 5.7, trimMat, {}, false);
 
-    // トリガー調整端末（Fキーでトリガー編成を開くオブジェクト）
+    // トリガー構成端末（Fキーでトリガー開発室を開く）
+    this.createTerminalMesh(6, 8, 0x38bdf8);
+    this.interactables.push({
+      type: 'trigger_terminal',
+      pos: new THREE.Vector3(6, 1.0, 8),
+      radius: 3.0,
+      label: '[F] トリガー構成端末'
+    });
+
+    // トリオン供給端末（Fキーで全回復）
+    this.createTerminalMesh(-6, 8, 0x48bb78);
+    this.interactables.push({
+      type: 'supply_terminal',
+      pos: new THREE.Vector3(-6, 1.0, 8),
+      radius: 3.0,
+      label: '[F] トリオン供給端末（全充填）'
+    });
+
+    // 模擬戦フィールドへの転送ゲート
+    this.createPortal(0, 1.8, -14, false);
+
+    const playerStart = new THREE.Vector3(0, 0, 12);
+    return {
+      playerStart,
+      rivalStart: null,
+      spawnPos: playerStart,
+      enemySpawns: []
+    };
+  }
+
+  createTerminalMesh(x, z, screenColor) {
     const termGroup = new THREE.Group();
     const baseMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1.8, 1.2, 1.2),
@@ -193,8 +222,8 @@ export class World {
     const screenMesh = new THREE.Mesh(
       new THREE.BoxGeometry(1.5, 0.85, 0.1),
       new THREE.MeshStandardMaterial({
-        color: 0x38bdf8,
-        emissive: 0x0ea5e9,
+        color: screenColor,
+        emissive: screenColor,
         emissiveIntensity: 0.9
       })
     );
@@ -202,24 +231,9 @@ export class World {
     screenMesh.rotation.x = -0.35;
     termGroup.add(screenMesh);
 
-    termGroup.position.set(6, 0, 8);
+    termGroup.position.set(x, 0, z);
     this.scene.add(termGroup);
     this.dungeonMeshes.push(termGroup);
-
-    this.interactables.push({
-      type: 'trigger_terminal',
-      pos: new THREE.Vector3(6, 1.0, 8),
-      radius: 3.0,
-      label: '[F] トリガー構成端末'
-    });
-
-    // 模擬戦フィールドへの転送ゲート
-    this.createPortal(0, 1.8, -14, false);
-
-    return {
-      spawnPos: new THREE.Vector3(0, 0, 12),
-      enemySpawns: []
-    };
   }
 
   // ---- ワールドトリガー風 市街地ランク戦フィールド（エリア1以上） ----
@@ -242,7 +256,7 @@ export class World {
     this.buildEnterableBuilding(-34, 32, 2, 24, false);
     this.buildEnterableBuilding(34, 32, 3, 24, false);
 
-    // 道路上の遮蔽物・連絡歩道橋・破壊可能コンテナ
+    // 道路上の遮蔽物・破壊可能コンテナ
     const coverLocations = [
       [-18, 0], [18, 0], [0, -22], [0, 22],
       [-22, -16], [22, -16], [-22, 16], [22, 16]
@@ -255,22 +269,23 @@ export class World {
     // 北側広場に次エリアへの転送ゲート（最初はロック状態、撃破後に解除）
     this.createPortal(0, 1.8, -54, true);
 
-    // プレイヤーと敵AIのスポーン座標（建物に埋まらない道路上の安全地点）
-    const spawnPos = new THREE.Vector3(0, 0, 52);
+    // プレイヤーと対戦相手のスポーン座標（建物に埋まらない道路上の安全地点）
+    const playerStart = new THREE.Vector3(0, 0, 52);
     const candidateSpawns = [
+      new THREE.Vector3(0, 0, -46),
       new THREE.Vector3(-48, 0, -48),
       new THREE.Vector3(48, 0, -48),
       new THREE.Vector3(-48, 0, 0),
       new THREE.Vector3(48, 0, 0),
-      new THREE.Vector3(0, 0, -46),
       new THREE.Vector3(-18, 0, -34),
-      new THREE.Vector3(18, 0, -34),
-      new THREE.Vector3(-34, 13.1, -32), // 北西ビル屋上狙撃手
-      new THREE.Vector3(34, 13.1, 32)    // 南東ビル屋上狙撃手
+      new THREE.Vector3(18, 0, -34)
     ];
+    const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
 
     return {
-      spawnPos,
+      playerStart,
+      rivalStart,
+      spawnPos: playerStart,
       enemySpawns: candidateSpawns
     };
   }
@@ -513,6 +528,27 @@ export class World {
     this.addDestructibleBlock(cx - halfS + 3.5, roofY + HALF, cz + halfS - 3.5, 0x38bdf8, 55);
   }
 
+  // ---- インタラクト（端末）判定・実行（main.js / player.js から呼ばれる） ----
+  getNearbyInteractable(playerPos) {
+    if (!playerPos) return null;
+    for (const item of this.interactables) {
+      if (playerPos.distanceTo(item.pos) <= item.radius) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  triggerInteractable(item, player, maxTrionVal) {
+    if (!item) return;
+    if (item.type === 'trigger_terminal') {
+      window.dispatchEvent(new CustomEvent('open-town-tab', { detail: 'trigger' }));
+    } else if (item.type === 'supply_terminal') {
+      if (player) player.trion = maxTrionVal;
+      this.onToast('⚡ トリオン体を100%まで急速充填しました！');
+    }
+  }
+
   // ---- 転送ゲート（ポータル）生成・解除 ----
   createPortal(x, y, z, locked = false) {
     this.portalPos.set(x, y, z);
@@ -523,8 +559,7 @@ export class World {
     const coreMat = new THREE.MeshStandardMaterial({
       color: coreColor,
       emissive: coreColor,
-      emissiveIntensity: 0.9,
-      wireframe: false
+      emissiveIntensity: 0.9
     });
     this.portalMesh = new THREE.Mesh(coreGeo, coreMat);
     this.portalMesh.position.copy(this.portalPos);
@@ -550,14 +585,19 @@ export class World {
     this.onToast('全敵部隊ベイルアウト！北側転送ゲートが起動しました');
   }
 
+  // enemy.js から呼ばれるエイリアス
+  unlockExitPortal() {
+    this.unlockPortal();
+  }
+
   // ---- 破壊可能トリオンブロックのダメージ・破壊処理 ----
-  damageWall(wallMesh, dmg, hitPoint) {
+  damageBlock(wallMesh, dmg, hitPoint) {
     if (!wallMesh || !wallMesh.userData || !wallMesh.userData.destructible) return;
     wallMesh.userData.hp -= dmg;
-    this.spawnWallSparks(hitPoint || wallMesh.position, 0x38bdf8);
+    this.spawnHitSpark(hitPoint || wallMesh.position, 0x38bdf8);
 
     if (wallMesh.userData.hp <= 0) {
-      this.spawnWallSparks(wallMesh.position, 0x7dd3fc, 14);
+      this.spawnHitSpark(wallMesh.position, 0x7dd3fc, 14);
       this.scene.remove(wallMesh);
       this.walls = this.walls.filter((w) => w !== wallMesh);
       this.destructibles = this.destructibles.filter((w) => w !== wallMesh);
@@ -569,7 +609,12 @@ export class World {
     }
   }
 
-  spawnWallSparks(pos, colorHex = 0x38bdf8, count = 7) {
+  damageWall(wallMesh, dmg, hitPoint) {
+    this.damageBlock(wallMesh, dmg, hitPoint);
+  }
+
+  // player.js / enemy.js から呼ばれるヒット火花エフェクト
+  spawnHitSpark(pos, colorHex = 0x38bdf8, count = 7) {
     for (let i = 0; i < count; i++) {
       const p = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.16, 0.16),
@@ -589,8 +634,11 @@ export class World {
     }
   }
 
-  update(dt, playerPos) {
-    // ポータル回転演出
+  spawnWallSparks(pos, colorHex = 0x38bdf8, count = 7) {
+    this.spawnHitSpark(pos, colorHex, count);
+  }
+
+  update(dt, player) {
     if (this.portalMesh) {
       this.portalMesh.rotation.y += dt * 1.8;
       this.portalMesh.rotation.x += dt * 0.9;
@@ -599,7 +647,6 @@ export class World {
       this.portalRing.rotation.z -= dt * 1.4;
     }
 
-    // 破壊火花パーティクル更新
     for (let i = this.sparks.length - 1; i >= 0; i--) {
       const s = this.sparks[i];
       s.vel.y -= 18 * dt;
@@ -607,22 +654,15 @@ export class World {
       s.life -= dt;
       if (s.life <= 0) {
         this.scene.remove(s.mesh);
+        s.mesh.geometry.dispose();
+        s.mesh.material.dispose();
         this.sparks.splice(i, 1);
       }
     }
 
-    // インタラクト（端末）接近チェック
-    let nearInteractable = null;
-    if (playerPos) {
-      for (const item of this.interactables) {
-        if (playerPos.distanceTo(item.pos) <= item.radius) {
-          nearInteractable = item;
-          break;
-        }
-      }
-    }
+    const playerPos = player && player.root ? player.root.position : player;
+    const nearInteractable = this.getNearbyInteractable(playerPos);
 
-    // 転送ゲート到達判定
     let enteredPortal = false;
     if (this.portalMesh && !this.portalLocked && playerPos) {
       const dx = playerPos.x - this.portalPos.x;
@@ -634,6 +674,35 @@ export class World {
     }
 
     return { nearInteractable, enteredPortal };
+  }
+
+  // ---- 敵AI用：2点間の視線（射線）が壁・建物に遮られていないか判定 ----
+  hasLineOfSight(posA, posB) {
+    const start = posA.clone().add(new THREE.Vector3(0, 1.3, 0));
+    const end = posB.clone().add(new THREE.Vector3(0, 1.3, 0));
+    const diff = end.clone().sub(start);
+    const dist = diff.length();
+    if (dist < 0.5) return true;
+
+    const steps = Math.ceil(dist / 1.2);
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const pt = start.clone().addScaledVector(diff, t);
+      for (const wall of this.walls) {
+        if (wall.material?.transparent) continue;
+        const hx = wall.userData.halfX || HALF;
+        const hy = wall.userData.halfY || HALF;
+        const hz = wall.userData.halfZ || HALF;
+        if (
+          Math.abs(pt.x - wall.position.x) < hx &&
+          Math.abs(pt.y - wall.position.y) < hy &&
+          Math.abs(pt.z - wall.position.z) < hz
+        ) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   // ---- エンティティ（敵AI・射撃）用の衝突・段差登坂・地面高さ判定 ----
