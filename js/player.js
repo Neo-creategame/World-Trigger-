@@ -1128,8 +1128,3 @@ export class Player {
     const lookTarget = focus.clone().addScaledVector(dir, -12);
     this.camera.lookAt(lookTarget);
   }
-
-    this.camera.position.lerp(desiredPos, 0.38);
-    this.camera.lookAt(focus);
-  }
-}
