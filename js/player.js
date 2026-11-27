@@ -853,8 +853,9 @@ export class Player {
       }
 
       if (!hitTarget) {
-        for (const wall of this.world.walls) {
-          if (p.hitSet.has(wall)) continue;
+     const nearbyWalls = this.world.queryNearbyWalls(p.mesh.position.x, p.mesh.position.z, 2.5);
+     for (const wall of nearbyWalls) {
+       if (p.hitSet.has(wall)) continue;
           const hx = wall.userData.halfX || 1.0;
           const hy = wall.userData.halfY || 1.0;
           const hz = wall.userData.halfZ || 1.0;
@@ -970,7 +971,8 @@ export class Player {
     // 階段の段差（0.58m以下）は自動登坂できるように余裕を持たせる
     const feet = pY + 0.58;
     const head = pY + PLAYER_HEIGHT;
-    for (const wall of this.world.walls) {
+    const nearbyWalls = this.world.queryNearbyWalls(x, z, PLAYER_RADIUS + 2.5);
+    for (const wall of nearbyWalls) {
       const hx = wall.userData.halfX || 1.0;
       const hy = wall.userData.halfY || 1.0;
       const hz = wall.userData.halfZ || 1.0;
@@ -1049,7 +1051,8 @@ export class Player {
     let groundY = 0;
     let landed = false;
 
-    for (const wall of this.world.walls) {
+    const nearbyFloorWalls = this.world.queryNearbyWalls(this.root.position.x, this.root.position.z, PLAYER_RADIUS + 2.5);
+    for (const wall of nearbyFloorWalls) {
       const hx = wall.userData.halfX || 1.0;
       const hy = wall.userData.halfY || 1.0;
       const hz = wall.userData.halfZ || 1.0;
@@ -1124,7 +1127,8 @@ export class Player {
       for (let d = 1.2; d <= this.camDist; d += 0.4) {
         const testPos = focus.clone().addScaledVector(dir, d);
         let blocked = false;
-        for (const wall of this.world.walls) {
+        const nearbyFloorWalls = this.world.queryNearbyWalls(this.root.position.x, this.root.position.z, PLAYER_RADIUS + 2.5);
+        for (const wall of nearbyFloorWalls) {
           if (wall.material?.transparent) continue;
           const hx = wall.userData.halfX || 1.0;
           const hy = wall.userData.halfY || 1.0;
