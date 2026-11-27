@@ -2,14 +2,22 @@ import * as THREE from 'three';
 
 const BOX_SIZE = 1.6;
 const HALF = BOX_SIZE / 2;
+const GRID_CELL_SIZE = 12.0; // 空間ハッシュグリッドの1セルサイズ（12m × 12m）
 
 export class World {
   constructor(scene, onToast) {
     this.scene = scene;
     this.onToast = onToast || (() => {});
 
+    // 論理コライダー配列（互換性維持）＆ 空間ハッシュグリッド
     this.walls = [];
     this.destructibles = [];
+    this.spatialGrid = new Map();
+
+    // InstancedMesh バッチ管理用
+    this.instancedBatches = [];
+    this.pendingInstances = new Map();
+
     this.sparks = [];
     this.dungeonMeshes = [];
     this.interactables = [];
@@ -39,8 +47,149 @@ export class World {
         transparent: true,
         opacity: 0.42,
         roughness: 0.2
+      }),
+      destructibleBox: new THREE.MeshStandardMaterial({
+        map: this.boxTex,
+        color: 0x38bdf8,
+        roughness: 0.4
+      }),
+      destructibleProp: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.45
       })
     };
+    this.unitBoxGeo = new THREE.BoxGeometry(1, 1, 1);
+  }
+
+  // ==========================================
+  // 空間ハッシュグリッド（Spatial Hash Grid）管理
+  // ==========================================
+  getCellKey(cx, cz) {
+    return `${cx},${cz}`;
+  }
+
+  registerWallToGrid(wall) {
+    const hx = wall.userData.halfX || HALF;
+    const hz = wall.userData.halfZ || HALF;
+    const minX = Math.floor((wall.position.x - hx) / GRID_CELL_SIZE);
+    const maxX = Math.floor((wall.position.x + hx) / GRID_CELL_SIZE);
+    const minZ = Math.floor((wall.position.z - hz) / GRID_CELL_SIZE);
+    const maxZ = Math.floor((wall.position.z + hz) / GRID_CELL_SIZE);
+
+    wall.userData._gridKeys = [];
+    for (let cx = minX; cx <= maxX; cx++) {
+      for (let cz = minZ; cz <= maxZ; cz++) {
+        const key = this.getCellKey(cx, cz);
+        let bucket = this.spatialGrid.get(key);
+        if (!bucket) {
+          bucket = [];
+          this.spatialGrid.set(key, bucket);
+        }
+        bucket.push(wall);
+        wall.userData._gridKeys.push(key);
+      }
+    }
+  }
+
+  unregisterWallFromGrid(wall) {
+    if (!wall.userData._gridKeys) return;
+    for (const key of wall.userData._gridKeys) {
+      const bucket = this.spatialGrid.get(key);
+      if (bucket) {
+        const idx = bucket.indexOf(wall);
+        if (idx !== -1) bucket.splice(idx, 1);
+      }
+    }
+    wall.userData._gridKeys = [];
+  }
+
+  // 指定座標＋半径範囲の壁だけを高速取得（O(1)）
+  queryNearbyWalls(x, z, radius = 2.0) {
+    const minX = Math.floor((x - radius) / GRID_CELL_SIZE);
+    const maxX = Math.floor((x + radius) / GRID_CELL_SIZE);
+    const minZ = Math.floor((z - radius) / GRID_CELL_SIZE);
+    const maxZ = Math.floor((z + radius) / GRID_CELL_SIZE);
+
+    const results = [];
+    const seen = new Set();
+    for (let cx = minX; cx <= maxX; cx++) {
+      for (let cz = minZ; cz <= maxZ; cz++) {
+        const bucket = this.spatialGrid.get(this.getCellKey(cx, cz));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const w = bucket[i];
+          if (!seen.has(w)) {
+            seen.add(w);
+            results.push(w);
+          }
+        }
+      }
+    }
+    return results;
+  }
+
+  // ==========================================
+  // InstancedMesh 一括描画バッチ化システム
+  // ==========================================
+  queueInstance(batchKey, mat, cx, cy, cz, w, h, d, colorHex = null, castShadow = false) {
+    if (!this.pendingInstances.has(batchKey)) {
+      this.pendingInstances.set(batchKey, {
+        mat,
+        castShadow,
+        items: []
+      });
+    }
+    const batch = this.pendingInstances.get(batchKey);
+    const index = batch.items.length;
+    batch.items.push({ cx, cy, cz, w, h, d, colorHex });
+    return { batchKey, index };
+  }
+
+  flushInstances() {
+    const dummy = new THREE.Object3D();
+    const tmpColor = new THREE.Color();
+
+    for (const [batchKey, data] of this.pendingInstances.entries()) {
+      const count = data.items.length;
+      if (count === 0) continue;
+
+      const instMesh = new THREE.InstancedMesh(this.unitBoxGeo, data.mat, count);
+      instMesh.castShadow = data.castShadow;
+      instMesh.receiveShadow = true;
+
+      let hasCustomColors = false;
+      for (let i = 0; i < count; i++) {
+        const it = data.items[i];
+        dummy.position.set(it.cx, it.cy, it.cz);
+        dummy.scale.set(it.w, it.h, it.d);
+        dummy.updateMatrix();
+        instMesh.setMatrixAt(i, dummy.matrix);
+
+        if (it.colorHex !== null) {
+          tmpColor.setHex(it.colorHex);
+          instMesh.setColorAt(i, tmpColor);
+          hasCustomColors = true;
+        }
+      }
+
+      instMesh.instanceMatrix.needsUpdate = true;
+      if (hasCustomColors && instMesh.instanceColor) {
+        instMesh.instanceColor.needsUpdate = true;
+      }
+
+      this.scene.add(instMesh);
+      this.instancedBatches.push(instMesh);
+      this.dungeonMeshes.push(instMesh);
+      data.instMesh = instMesh;
+    }
+  }
+
+  hideInstance(batchKey, index) {
+    const data = this.pendingInstances.get(batchKey);
+    if (!data || !data.instMesh) return;
+    const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
+    data.instMesh.setMatrixAt(index, zeroMat);
+    data.instMesh.instanceMatrix.needsUpdate = true;
   }
 
   createGridTexture(bg, line) {
@@ -106,14 +255,23 @@ export class World {
       this.scene.background = new THREE.Color(0x0b1120);
       if (this.scene.fog) this.scene.fog.color.setHex(0x0b1120);
     }
-    for (const m of this.dungeonMeshes) this.scene.remove(m);
+
+    for (const m of this.dungeonMeshes) {
+      this.scene.remove(m);
+      if (m.isInstancedMesh) m.dispose();
+    }
     this.dungeonMeshes = [];
+    this.instancedBatches = [];
+    this.pendingInstances.clear();
 
     for (const w of this.walls) {
-      if (!w.userData.isInstancedProxy) this.scene.remove(w);
+      if (!w.userData.isInstancedProxy && w.parent) {
+        this.scene.remove(w);
+      }
     }
     this.walls = [];
     this.destructibles = [];
+    this.spatialGrid.clear();
     this.interactables = [];
     this.jumpPads = [];
 
@@ -131,7 +289,7 @@ export class World {
     this.clearDungeon();
 
     const floorMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(300, 300),
+      new THREE.PlaneGeometry(360, 360),
       new THREE.MeshStandardMaterial({ map: this.roadTex, roughness: 0.85 })
     );
     floorMesh.rotation.x = -Math.PI / 2;
@@ -139,13 +297,114 @@ export class World {
     this.scene.add(floorMesh);
     this.dungeonMeshes.push(floorMesh);
 
+    let layout;
     if (floor === 0) {
-      return this.buildBase();
+      layout = this.buildBase();
+    } else if (floor % 2 === 0) {
+      layout = this.buildResidentialArena(floor);
+    } else {
+      layout = this.buildCityArena(floor);
     }
-    if (floor % 2 === 0) {
-      return this.buildResidentialArena(floor);
-    }
-    return this.buildCityArena(floor);
+
+    // キューに積まれた全パーツを InstancedMesh として一括生成（Draw Call極小化）
+    this.flushInstances();
+    return layout;
+  }
+
+  // ---- 軽量コライダープロキシ生成 + InstancedMesh 登録 ----
+  addSolidBox(cx, cy, cz, w, h, d, mat, extraData = {}, castShadow = false) {
+    const isTransparent = !!(mat && mat.transparent);
+    const batchKey = mat === this.sharedMats.wall ? 'wall'
+      : mat === this.sharedMats.floor ? 'floor'
+      : mat === this.sharedMats.stair ? 'stair'
+      : mat === this.sharedMats.rail ? 'rail'
+      : mat === this.sharedMats.glassRail ? 'glassRail'
+      : `custom_${mat.uuid}`;
+
+    const ref = this.queueInstance(batchKey, mat, cx, cy, cz, w, h, d, null, castShadow);
+
+    const collider = {
+      position: new THREE.Vector3(cx, cy, cz),
+      material: { transparent: isTransparent },
+      userData: {
+        isInstancedProxy: true,
+        batchKey: ref.batchKey,
+        instanceIndex: ref.index,
+        halfX: w / 2,
+        halfY: h / 2,
+        halfZ: d / 2,
+        destructible: false,
+        ...extraData
+      }
+    };
+
+    this.walls.push(collider);
+    this.registerWallToGrid(collider);
+    return collider;
+  }
+
+  addDestructibleBlock(cx, cy, cz, colorHex = 0x38bdf8, hp = 50) {
+    const ref = this.queueInstance(
+      'destructibleBox',
+      this.sharedMats.destructibleBox,
+      cx, cy, cz,
+      BOX_SIZE, BOX_SIZE, BOX_SIZE,
+      colorHex,
+      false
+    );
+
+    const collider = {
+      position: new THREE.Vector3(cx, cy, cz),
+      material: { transparent: false },
+      userData: {
+        isInstancedProxy: true,
+        batchKey: ref.batchKey,
+        instanceIndex: ref.index,
+        halfX: HALF,
+        halfY: HALF,
+        halfZ: HALF,
+        destructible: true,
+        hp,
+        maxHp: hp
+      }
+    };
+
+    this.walls.push(collider);
+    this.destructibles.push(collider);
+    this.registerWallToGrid(collider);
+    return collider;
+  }
+
+  addDestructibleProp(cx, cy, cz, w, h, d, colorHex, hp = 55) {
+    const ref = this.queueInstance(
+      'destructibleProp',
+      this.sharedMats.destructibleProp,
+      cx, cy, cz,
+      w, h, d,
+      colorHex,
+      false
+    );
+
+    const collider = {
+      position: new THREE.Vector3(cx, cy, cz),
+      material: { transparent: false },
+      userData: {
+        isInstancedProxy: true,
+        batchKey: ref.batchKey,
+        instanceIndex: ref.index,
+        halfX: w / 2,
+        halfY: h / 2,
+        halfZ: d / 2,
+        destructible: true,
+        hp,
+        maxHp: hp
+      }
+    };
+
+    this.walls.push(collider);
+    this.destructibles.push(collider);
+    this.registerWallToGrid(collider);
+    return collider;
   }
 
   // ---- ボーダー本部基地（エリア0） ----
@@ -173,19 +432,14 @@ export class World {
       });
     });
 
-    // 訓練用サンドバッグ（破壊テスト可能なトリオンブロック）
     this.addDestructibleBlock(-6, HALF, -6, 0x38bdf8, 60);
     this.addDestructibleBlock(-6, HALF + BOX_SIZE, -6, 0x38bdf8, 60);
     this.addDestructibleBlock(6, HALF, -6, 0x38bdf8, 60);
-
-    // 訓練用車両オブジェクト
     this.addDestructibleCar(-11, -6, false, 0x64748b);
 
-    // 高台ジャンプ訓練足場
     this.addSolidBox(-13, 1.6, 8, 5.5, 3.2, 5.5, wallMat);
     this.addSolidBox(-13, 3.3, 8, 5.7, 0.2, 5.7, trimMat, {}, false);
 
-    // トリガー構成端末
     this.createTerminalMesh(6, 8, 0x38bdf8);
     this.interactables.push({
       type: 'trigger_terminal',
@@ -194,7 +448,6 @@ export class World {
       label: '[F] トリガー構成端末'
     });
 
-    // トリオン供給端末
     this.createTerminalMesh(-6, 8, 0x48bb78);
     this.interactables.push({
       type: 'supply_terminal',
@@ -203,7 +456,6 @@ export class World {
       label: '[F] トリオン供給端末（全充填）'
     });
 
-    // 模擬戦フィールドへの転送ゲート
     this.createPortal(0, 1.8, -14, false);
 
     const playerStart = new THREE.Vector3(0, 0, 12);
@@ -241,37 +493,10 @@ export class World {
     this.dungeonMeshes.push(termGroup);
   }
 
-  // ---- 破壊可能な市街地オブジェクト（車両・自販機・ガードレール） ----
-  addDestructibleProp(cx, cy, cz, w, h, d, colorHex, hp = 55) {
-    const mat = new THREE.MeshStandardMaterial({
-      color: colorHex,
-      roughness: 0.45
-    });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    mesh.position.set(cx, cy, cz);
-    mesh.castShadow = false;
-    mesh.receiveShadow = true;
-    mesh.userData = {
-      halfX: w / 2,
-      halfY: h / 2,
-      halfZ: d / 2,
-      destructible: true,
-      hp,
-      maxHp: hp
-    };
-    this.scene.add(mesh);
-    this.walls.push(mesh);
-    this.destructibles.push(mesh);
-    this.dungeonMeshes.push(mesh);
-    return mesh;
-  }
-
   addDestructibleCar(cx, cz, rotateZ = false, bodyColor = 0x475569) {
     const w = rotateZ ? 2.1 : 4.2;
     const d = rotateZ ? 4.2 : 2.1;
-    // 車体下部（遮蔽物として使える高さ1.1m）
     this.addDestructibleProp(cx, 0.55, cz, w, 1.1, d, bodyColor, 85);
-    // キャビン上部
     this.addDestructibleProp(cx, 1.4, cz, w * 0.58, 0.65, d * 0.85, 0x94a3b8, 45);
   }
 
@@ -285,7 +510,6 @@ export class World {
     this.addDestructibleProp(cx, 0.45, cz, w, 0.9, d, 0xcbd5e1, 35);
   }
 
-  // ---- ビル間をつなぐ空中連絡橋（スカイブリッジ） ----
   buildSkyBridge(x1, z1, x2, z2, deckY, width = 3.6) {
     const floorMat = this.sharedMats.floor;
     const glassRailMat = this.sharedMats.glassRail;
@@ -295,49 +519,39 @@ export class World {
     const dz = Math.abs(z2 - z1);
 
     if (dx > dz) {
-      // 東西方向ブリッジ
       this.addSolidBox(cx, deckY - 0.25, cz, dx, 0.5, width, floorMat, {}, false);
       this.addSolidBox(cx, deckY + 0.55, cz - width / 2 + 0.15, dx, 1.1, 0.25, glassRailMat, {}, false);
       this.addSolidBox(cx, deckY + 0.55, cz + width / 2 - 0.15, dx, 1.1, 0.25, glassRailMat, {}, false);
     } else {
-      // 南北方向ブリッジ
       this.addSolidBox(cx, deckY - 0.25, cz, width, 0.5, dz, floorMat, {}, false);
       this.addSolidBox(cx - width / 2 + 0.15, deckY + 0.55, cz, 0.25, 1.1, dz, glassRailMat, {}, false);
       this.addSolidBox(cx + width / 2 - 0.15, deckY + 0.55, cz, 0.25, 1.1, dz, glassRailMat, {}, false);
     }
   }
 
-  // ---- ワールドトリガー風 市街地ランク戦フィールド（エリア1以上） ----
+  // ---- 市街地ランク戦フィールド（商業ビル街） ----
   buildCityArena(floor) {
     this.portalLocked = true;
     const arenaHalf = 66;
     const wallH = 12;
     const wallMat = this.sharedMats.wall;
 
-    // フィールド外周の境界バリア壁（132m x 132m）
     this.addSolidBox(0, wallH / 2, -arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
     this.addSolidBox(0, wallH / 2, arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
     this.addSolidBox(-arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
     this.addSolidBox(arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
 
-    // 5棟の大型進入可能ビルを配置
     this.buildEnterableBuilding(0, 0, 3, 28, true);
     this.buildEnterableBuilding(-34, -32, 3, 24, false);
     this.buildEnterableBuilding(34, -32, 2, 24, false);
     this.buildEnterableBuilding(-34, 32, 2, 24, false);
     this.buildEnterableBuilding(34, 32, 3, 24, false);
 
-    // ビル屋上・上階同士をつなぐ空中連絡橋（スカイブリッジ: 2F高さ 13.0m）
-    // 北西ビル(x=-22) ⇔ 北東ビル(x=+22) の2階屋上連絡橋
     this.buildSkyBridge(-22, -32, 22, -32, 13.0, 3.8);
-    // 南西ビル(x=-22) ⇔ 南東ビル(x=+22) の2階屋上連絡橋
     this.buildSkyBridge(-22, 32, 22, 32, 13.0, 3.8);
-    // 北西ビル(z=-20) ⇔ 南西ビル(z=+20) の西側スカイブリッジ
     this.buildSkyBridge(-34, -20, -34, 20, 13.0, 3.8);
-    // 北東ビル(z=-20) ⇔ 南東ビル(z=+20) の東側スカイブリッジ
     this.buildSkyBridge(34, -20, 34, 20, 13.0, 3.8);
 
-    // 道路上の破壊可能遮蔽物（車両・自動販売機・ガードレール・トリオンコンテナ）
     this.addDestructibleCar(-18, -8, true, 0x334155);
     this.addDestructibleCar(18, 8, true, 0x1e3a8a);
     this.addDestructibleCar(-10, -24, false, 0x475569);
@@ -345,19 +559,16 @@ export class World {
     this.addDestructibleCar(-18, 22, true, 0x0f172a);
     this.addDestructibleCar(18, -22, true, 0x1e293b);
 
-    // ビル入口付近の自動販売機
     this.addVendingMachine(-15.2, -5.5, 0x0ea5e9);
     this.addVendingMachine(15.2, 5.5, 0xef4444);
     this.addVendingMachine(-21.2, -26.0, 0x38bdf8);
     this.addVendingMachine(21.2, 26.0, 0x0ea5e9);
 
-    // 交差点のガードレール
     this.addGuardRail(-19, -15, false);
     this.addGuardRail(19, 15, false);
     this.addGuardRail(-19, 15, false);
     this.addGuardRail(19, -15, false);
 
-    // 北側広場に次エリアへの転送ゲート
     this.createPortal(0, 1.8, -54, true);
 
     const playerStart = new THREE.Vector3(0, 0, 52);
@@ -367,8 +578,8 @@ export class World {
       new THREE.Vector3(48, 0, -48),
       new THREE.Vector3(-48, 0, 0),
       new THREE.Vector3(48, 0, 0),
-      new THREE.Vector3(-34, 19.5, -32), // 北西ビル屋上スポーン
-      new THREE.Vector3(34, 19.5, 32)    // 南東ビル屋上スポーン
+      new THREE.Vector3(-34, 19.5, -32),
+      new THREE.Vector3(34, 19.5, 32)
     ];
     const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
 
@@ -379,6 +590,7 @@ export class World {
       enemySpawns: candidateSpawns
     };
   }
+
   // ---- 進入不可の戸建て住宅（屋根の上にグラスホッパーで登れる） ----
   buildClosedHouse(cx, cz, w = 8.5, d = 7.5, stories = 2, wallColor = 0xe2e8f0, roofColor = 0x334155) {
     const wallH = stories === 2 ? 5.6 : 3.2;
@@ -386,23 +598,16 @@ export class World {
     const roofMat = new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.5 });
     const trimMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.5 });
 
-    // 建物本体（中に入れないソリッドブロック）
     this.addSolidBox(cx, wallH / 2, cz, w, wallH, d, houseWallMat);
-
-    // 軒先・陸屋根スラブ（屋根の上を歩ける）
     this.addSolidBox(cx, wallH + 0.18, cz, w + 0.6, 0.36, d + 0.6, roofMat);
 
-    // 2階建ての場合は屋上パラペット（手すり縁）と室外機遮蔽物を追加
     if (stories === 2) {
       const pY = wallH + 0.55;
       this.addSolidBox(cx, pY, cz - d / 2 - 0.15, w + 0.6, 0.4, 0.25, trimMat, {}, false);
       this.addSolidBox(cx, pY, cz + d / 2 + 0.15, w + 0.6, 0.4, 0.25, trimMat, {}, false);
-      // 屋上の空調室外機（スナイパーの伏せ遮蔽物）
       this.addSolidBox(cx - w * 0.25, wallH + 0.8, cz, 1.4, 0.9, 1.0, trimMat, {}, false);
     }
 
-    // 住宅を囲む破壊可能なブロック塀（高さ1.3m：しゃがみ・遮蔽に最適）
-    const fenceMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.7 });
     const fenceOffsetZ = d / 2 + 1.1;
     this.addDestructibleProp(cx - w * 0.28, 0.65, cz + fenceOffsetZ, w * 0.42, 1.3, 0.3, 0x94a3b8, 45);
     this.addDestructibleProp(cx + w * 0.28, 0.65, cz + fenceOffsetZ, w * 0.42, 1.3, 0.3, 0x94a3b8, 45);
@@ -412,7 +617,6 @@ export class World {
   buildResidentialArena(floor) {
     this.portalLocked = true;
 
-    // 夕暮れ〜薄暮の空とフォグ（B級ランク戦最終戦の雰囲気）
     const duskColor = 0x2b1d38;
     this.scene.background = new THREE.Color(duskColor);
     if (this.scene.fog) {
@@ -423,13 +627,11 @@ export class World {
     const wallH = 11;
     const wallMat = this.sharedMats.wall;
 
-    // フィールド外周の境界バリア壁（132m x 132m）
     this.addSolidBox(0, wallH / 2, -arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
     this.addSolidBox(0, wallH / 2, arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
     this.addSolidBox(-arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
     this.addSolidBox(arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
 
-    // 1. 南側エリア（z = +26 ~ +54）：河川敷＆水路・2本の橋（開けた射撃戦エリア）
     const waterMat = new THREE.MeshStandardMaterial({
       color: 0x0f2942,
       emissive: 0x0284c7,
@@ -439,14 +641,12 @@ export class World {
     const grassMat = new THREE.MeshStandardMaterial({ color: 0x263829, roughness: 0.85 });
     const bridgeMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.55 });
 
-    // 川の水面（z = +38 付近を東西に横断）
     const riverMesh = new THREE.Mesh(new THREE.PlaneGeometry(130, 12), waterMat);
     riverMesh.rotation.x = -Math.PI / 2;
     riverMesh.position.set(0, 0.04, 38);
     this.scene.add(riverMesh);
     this.dungeonMeshes.push(riverMesh);
 
-    // 河川敷の緑地帯
     const bankNorth = new THREE.Mesh(new THREE.PlaneGeometry(130, 10), grassMat);
     bankNorth.rotation.x = -Math.PI / 2;
     bankNorth.position.set(0, 0.03, 27);
@@ -459,7 +659,6 @@ export class World {
     this.scene.add(bankSouth);
     this.dungeonMeshes.push(bankSouth);
 
-    // 川に架かる2本のコンクリート橋（西橋 x=-26 / 東橋 x=+26）
     [-26, 26].forEach((bx) => {
       this.addSolidBox(bx, 0.35, 38, 6.5, 0.7, 15.0, bridgeMat, {}, false);
       this.addGuardRail(bx - 3.0, 34.5, false);
@@ -468,28 +667,24 @@ export class World {
       this.addGuardRail(bx + 3.0, 41.5, false);
     });
 
-    // 2. 北〜中央エリア（z = -56 ~ +20）：密集した戸建て住宅街区画（4ブロック × 各4〜5棟）
     const housePalette = [0xe2e8f0, 0xcbd5e1, 0xd6d3d1, 0x94a3b8];
     const roofPalette = [0x1e293b, 0x334155, 0x3f2e3e, 0x1e3a5f];
 
     const houseSpecs = [
-      // 北西ブロック（x: -54 ~ -12, z: -52 ~ -22）
       { x: -48, z: -48, w: 9.0, d: 8.0, s: 2 },
       { x: -34, z: -48, w: 8.5, d: 7.5, s: 2 },
       { x: -20, z: -48, w: 8.5, d: 8.0, s: 1 },
       { x: -48, z: -32, w: 8.5, d: 7.5, s: 1 },
-      { x: -34, z: -32, w: 9.5, d: 8.5, s: 2 }, // 高台スナイプ拠点
+      { x: -34, z: -32, w: 9.5, d: 8.5, s: 2 },
       { x: -20, z: -32, w: 8.0, d: 7.5, s: 2 },
 
-      // 北東ブロック（x: +12 ~ +54, z: -52 ~ -22）
       { x: 20, z: -48, w: 8.5, d: 8.0, s: 2 },
       { x: 34, z: -48, w: 9.0, d: 7.5, s: 1 },
       { x: 48, z: -48, w: 8.5, d: 8.0, s: 2 },
       { x: 20, z: -32, w: 8.0, d: 7.5, s: 2 },
-      { x: 34, z: -32, w: 9.5, d: 8.5, s: 2 }, // 東側高台拠点
+      { x: 34, z: -32, w: 9.5, d: 8.5, s: 2 },
       { x: 48, z: -32, w: 8.5, d: 7.5, s: 1 },
 
-      // 中央西ブロック（x: -54 ~ -12, z: -12 ~ +16）
       { x: -48, z: -10, w: 8.5, d: 7.5, s: 2 },
       { x: -34, z: -10, w: 8.0, d: 7.5, s: 1 },
       { x: -20, z: -10, w: 9.0, d: 8.0, s: 2 },
@@ -497,7 +692,6 @@ export class World {
       { x: -34, z: 8,   w: 8.5, d: 7.5, s: 2 },
       { x: -20, z: 8,   w: 8.0, d: 7.5, s: 1 },
 
-      // 中央東ブロック（x: +12 ~ +54, z: -12 ~ +16）
       { x: 20, z: -10, w: 9.0, d: 8.0, s: 2 },
       { x: 34, z: -10, w: 8.0, d: 7.5, s: 1 },
       { x: 48, z: -10, w: 8.5, d: 7.5, s: 2 },
@@ -512,8 +706,6 @@ export class World {
       this.buildClosedHouse(h.x, h.z, h.w, h.d, h.s, wc, rc);
     });
 
-    // 3. 中央大通り（x = 0）＆ 東西幹線道路（z = -21）の破壊可能遮蔽物
-    // 路上駐車車両・自販機・ガードレール・トリオンコンテナ
     this.addDestructibleCar(-6.5, -40, true, 0x334155);
     this.addDestructibleCar(6.5, -26, true, 0x1e3a8a);
     this.addDestructibleCar(-6.5, -2, true, 0x475569);
@@ -521,29 +713,25 @@ export class World {
     this.addDestructibleCar(-28, -21, false, 0x334155);
     this.addDestructibleCar(28, -21, false, 0x1e293b);
 
-    // 角地の自動販売機（曲射バイパーや隠密の目印）
     this.addVendingMachine(-13.5, -25.5, 0x0ea5e9);
     this.addVendingMachine(13.5, -25.5, 0xef4444);
     this.addVendingMachine(-13.5, 14.5, 0x38bdf8);
     this.addVendingMachine(13.5, 14.5, 0x0ea5e9);
 
-    // 河川敷沿いのガードレール
     [-44, -14, 0, 14, 44].forEach((gx) => {
       this.addGuardRail(gx, 22.5, true);
     });
 
-    // 北側大通りの奥に次エリアへの転送ゲート
     this.createPortal(0, 1.8, -58, true);
 
-    // 南側河川敷からスタート（橋を渡って住宅街へ突入する展開）
     const playerStart = new THREE.Vector3(0, 0, 54);
     const candidateSpawns = [
-      new THREE.Vector3(0, 0, -48),      // 北側大通り
-      new THREE.Vector3(-42, 0, -21),    // 西側路地
-      new THREE.Vector3(42, 0, -21),     // 東側路地
-      new THREE.Vector3(-34, 6.0, -32),  // 北西2階建て住宅の屋根上（スナイパー高台）
-      new THREE.Vector3(34, 6.0, -32),   // 北東2階建て住宅の屋根上
-      new THREE.Vector3(-20, 6.0, -10)   // 中央西2階建て住宅の屋根上
+      new THREE.Vector3(0, 0, -48),
+      new THREE.Vector3(-42, 0, -21),
+      new THREE.Vector3(42, 0, -21),
+      new THREE.Vector3(-34, 6.0, -32),
+      new THREE.Vector3(34, 6.0, -32),
+      new THREE.Vector3(-20, 6.0, -10)
     ];
     const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
 
@@ -555,50 +743,6 @@ export class World {
     };
   }
 
-  addSolidBox(cx, cy, cz, w, h, d, mat, extraData = {}, castShadow = true) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    mesh.position.set(cx, cy, cz);
-    mesh.castShadow = castShadow;
-    mesh.receiveShadow = true;
-    mesh.userData = {
-      halfX: w / 2,
-      halfY: h / 2,
-      halfZ: d / 2,
-      destructible: false,
-      ...extraData
-    };
-    this.scene.add(mesh);
-    this.walls.push(mesh);
-    this.dungeonMeshes.push(mesh);
-    return mesh;
-  }
-
-  addDestructibleBlock(cx, cy, cz, colorHex = 0x38bdf8, hp = 50) {
-    const mat = new THREE.MeshStandardMaterial({
-      map: this.boxTex,
-      color: colorHex,
-      roughness: 0.4
-    });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(BOX_SIZE, BOX_SIZE, BOX_SIZE), mat);
-    mesh.position.set(cx, cy, cz);
-    mesh.castShadow = false;
-    mesh.receiveShadow = true;
-    mesh.userData = {
-      halfX: HALF,
-      halfY: HALF,
-      halfZ: HALF,
-      destructible: true,
-      hp,
-      maxHp: hp
-    };
-    this.scene.add(mesh);
-    this.walls.push(mesh);
-    this.destructibles.push(mesh);
-    this.dungeonMeshes.push(mesh);
-    return mesh;
-  }
-
-  // ---- 折り返し階段（広い乗降ホール付き・上階出口完全開放版） ----
   buildSwitchbackStaircase(cx, cz, baseY, floorH, stairMat, railMat) {
     const totalW = 6.4;
     const flightW = 3.0;
@@ -637,7 +781,6 @@ export class World {
     this.addSolidBox(cx, midY + 0.35, cz + 1.0, 0.25, 0.75, runLen - 1.2, railMat, {}, false);
   }
 
-  // ---- 中央吹き抜けの商業モール風エスカレーター（上下階の床に完全接続） ----
   buildMallEscalator(cx, cz, baseY, floorH, atriumHalf, stairMat, glassRailMat) {
     const width = 3.6;
     const length = atriumHalf * 2;
@@ -662,7 +805,6 @@ export class World {
     });
   }
 
-  // ---- ワールドトリガー風 大型商業・オフィスビル ----
   buildEnterableBuilding(cx, cz, floors = 2, size = 24, isCentralMall = false) {
     const wallMat = this.sharedMats.wall;
     const floorMat = this.sharedMats.floor;
@@ -759,7 +901,6 @@ export class World {
       }
     }
 
-    // 屋上スラブ
     const roofY = floors * floorH;
     if (isCentralMall) {
       this.addSolidBox(cx, roofY - slabThick / 2, cz - halfS + rimW / 2, size, slabThick, rimW, floorMat);
@@ -857,26 +998,28 @@ export class World {
     this.unlockPortal();
   }
 
-  damageBlock(wallMesh, dmg, hitPoint) {
-    if (!wallMesh || !wallMesh.userData || !wallMesh.userData.destructible) return;
-    wallMesh.userData.hp -= dmg;
-    this.spawnHitSpark(hitPoint || wallMesh.position, 0x38bdf8);
+  // ---- 破壊可能パーツのダメージ・破壊処理（InstancedMesh＆空間グリッド即座更新） ----
+  damageBlock(wallObj, dmg, hitPoint) {
+    if (!wallObj || !wallObj.userData || !wallObj.userData.destructible) return;
+    wallObj.userData.hp -= dmg;
+    this.spawnHitSpark(hitPoint || wallObj.position, 0x38bdf8);
 
-    if (wallMesh.userData.hp <= 0) {
-      this.spawnHitSpark(wallMesh.position, 0x7dd3fc, 14);
-      this.scene.remove(wallMesh);
-      this.walls = this.walls.filter((w) => w !== wallMesh);
-      this.destructibles = this.destructibles.filter((w) => w !== wallMesh);
-      this.dungeonMeshes = this.dungeonMeshes.filter((w) => w !== wallMesh);
-    } else {
-      const ratio = Math.max(0.2, wallMesh.userData.hp / wallMesh.userData.maxHp);
-      wallMesh.material.opacity = 0.4 + ratio * 0.6;
-      wallMesh.material.transparent = true;
+    if (wallObj.userData.hp <= 0) {
+      this.spawnHitSpark(wallObj.position, 0x7dd3fc, 14);
+      if (wallObj.userData.isInstancedProxy) {
+        this.hideInstance(wallObj.userData.batchKey, wallObj.userData.instanceIndex);
+      } else {
+        this.scene.remove(wallObj);
+      }
+      this.unregisterWallFromGrid(wallObj);
+      this.walls = this.walls.filter((w) => w !== wallObj);
+      this.destructibles = this.destructibles.filter((w) => w !== wallObj);
+      this.dungeonMeshes = this.dungeonMeshes.filter((w) => w !== wallObj);
     }
   }
 
-  damageWall(wallMesh, dmg, hitPoint) {
-    this.damageBlock(wallMesh, dmg, hitPoint);
+  damageWall(wallObj, dmg, hitPoint) {
+    this.damageBlock(wallObj, dmg, hitPoint);
   }
 
   spawnHitSpark(pos, colorHex = 0x38bdf8, count = 7) {
@@ -941,6 +1084,7 @@ export class World {
     return { nearInteractable, enteredPortal };
   }
 
+  // ---- 高速視線判定（通過グリッドセルのみチェック） ----
   hasLineOfSight(posA, posB) {
     const start = posA.clone().add(new THREE.Vector3(0, 1.3, 0));
     const end = posB.clone().add(new THREE.Vector3(0, 1.3, 0));
@@ -948,11 +1092,13 @@ export class World {
     const dist = diff.length();
     if (dist < 0.5) return true;
 
-    const steps = Math.ceil(dist / 1.2);
+    const steps = Math.ceil(dist / 1.4);
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
       const pt = start.clone().addScaledVector(diff, t);
-      for (const wall of this.walls) {
+      const nearby = this.queryNearbyWalls(pt.x, pt.z, 1.5);
+      for (let j = 0; j < nearby.length; j++) {
+        const wall = nearby[j];
         if (wall.material?.transparent) continue;
         const hx = wall.userData.halfX || HALF;
         const hy = wall.userData.halfY || HALF;
@@ -969,11 +1115,14 @@ export class World {
     return true;
   }
 
+  // ---- 高速衝突判定（周辺グリッドセルのみチェック） ----
   isBlockedForEntity(x, z, radius = 0.5, entityY = 0) {
     const stepUpAllowance = 0.72;
     const feet = entityY + stepUpAllowance;
     const head = entityY + 2.0;
-    for (const wall of this.walls) {
+    const nearby = this.queryNearbyWalls(x, z, radius + 2.0);
+    for (let i = 0; i < nearby.length; i++) {
+      const wall = nearby[i];
       const hx = wall.userData.halfX || HALF;
       const hy = wall.userData.halfY || HALF;
       const hz = wall.userData.halfZ || HALF;
@@ -993,7 +1142,9 @@ export class World {
 
   getGroundHeightAt(x, z, currentY = 0) {
     let groundY = 0;
-    for (const wall of this.walls) {
+    const nearby = this.queryNearbyWalls(x, z, 2.0);
+    for (let i = 0; i < nearby.length; i++) {
+      const wall = nearby[i];
       const hx = wall.userData.halfX || HALF;
       const hy = wall.userData.halfY || HALF;
       const hz = wall.userData.halfZ || HALF;
