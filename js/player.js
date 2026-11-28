@@ -27,6 +27,7 @@ export class Player {
 
     // トリガー用状態管理
     this.trionShieldUntil = 0;
+    this.shieldMode = 'focused';
     this.trionShieldReduce = 0;
     this.focusedShieldUntil = 0;
     this.zoomLevel = 0;
@@ -127,6 +128,21 @@ export class Player {
     this.focusedShieldMesh.position.set(0, 1.25, -1.15);
     this.focusedShieldMesh.visible = false;
     this.root.add(this.focusedShieldMesh);
+
+    // バッグワーム（隠密マント）
+    this.bagwormCloakMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.46, 0.56, 1.35, 16, 1, true),
+      new THREE.MeshStandardMaterial({
+        color: 0x1e293b,
+        roughness: 0.9,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.88
+      })
+    );
+    this.bagwormCloakMesh.position.set(0, 1.05, 0);
+    this.bagwormCloakMesh.visible = false;
+    this.root.add(this.bagwormCloakMesh);
   }
 
   // セット中の通常攻撃トリガーに合わせてブレードの見た目・色を切り替え
@@ -231,6 +247,7 @@ export class Player {
       if (e.code === 'KeyE') this.triggerSkill();
       if (e.code === 'KeyQ') this.triggerQSkill();
       if (e.code === 'KeyZ') this.triggerExS();
+      if (e.code === 'KeyV') this.toggleShieldMode();
       if (e.code === 'KeyF') this.tryInteract();
       if (e.code === 'Digit1') this.triggerOptSlot(0);
       if (e.code === 'Digit2') this.triggerOptSlot(1);
@@ -264,6 +281,25 @@ export class Player {
     });
 
     window.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  toggleShieldMode() {
+    this.shieldMode = this.shieldMode === 'focused' ? 'wide' : 'focused';
+    const label = this.shieldMode === 'focused'
+      ? '🛡️ シールド切替：【集中展開】（正面一点・完全防御）'
+      : '🌐 シールド切替：【広域展開】（全周囲カバー・ダメージ軽減）';
+    this.onToast(label);
+  }
+
+  toggleBagworm(forceOff = false) {
+    this.bagwormActive = forceOff ? false : !this.bagwormActive;
+    if (this.bagwormCloakMesh) {
+      this.bagwormCloakMesh.visible = this.bagwormActive;
+    }
+    if (this.bagwormActive) {
+      this.onToast('🧥 バッグワーム装着：レーダーから反応を消去');
+    } else if (!forceOff) {
+      this.onToast('🧥 バッグワーム解除');
+    }
   }
 
   tryInteract() {
@@ -300,25 +336,30 @@ export class Player {
     }
 
     let dmg = Math.max(1, Math.round(rawAtk));
-    if (now < this.focusedShieldUntil && attackerPos) {
-      const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
-      const toAttacker = attackerPos.clone().sub(this.root.position).setY(0).normalize();
-      if (forward.dot(toAttacker) > 0.45) {
-        const shieldPos = this.root.position.clone()
-          .add(new THREE.Vector3(0, 1.25, 0))
-          .addScaledVector(forward, 1.15);
-        this.world.spawnHitSpark(shieldPos, 0x00ffff, 14);
-        this.onDamagePopup(shieldPos, 'BLOCK', false);
-        this.onToast('🛡️ 集中シールドで完全防御！（0ダメージ）');
-        return;
+    if (now < this.trionShieldUntil) {
+      if (this.shieldMode === 'focused' && attackerPos) {
+        const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
+        const toAttacker = attackerPos.clone().sub(this.root.position).setY(0).normalize();
+        if (forward.dot(toAttacker) > 0.45) {
+          const shieldPos = this.root.position.clone()
+            .add(new THREE.Vector3(0, 1.25, 0))
+            .addScaledVector(forward, 1.15);
+          this.world.spawnHitSpark(shieldPos, 0x00ffff, 14);
+          this.onDamagePopup(shieldPos, 'BLOCK', false);
+          this.onToast('🛡️ 集中シールドで完全防御！（0ダメージ）');
+          return;
+        }
+      } else if (this.shieldMode === 'wide' && this.trionShieldReduce > 0) {
+        dmg = Math.max(1, Math.round(dmg * (1 - this.trionShieldReduce)));
+        this.world.spawnHitSpark(this.root.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 0x00ffff);
       }
     }
 
     // シールドトリガー展開中のダメージ軽減
-    if (now < this.trionShieldUntil && this.trionShieldReduce > 0) {
+    /*if (now < this.trionShieldUntil && this.trionShieldReduce > 0) {
       dmg = Math.max(1, Math.round(dmg * (1 - this.trionShieldReduce)));
       this.world.spawnHitSpark(this.root.position.clone().add(new THREE.Vector3(0, 1.2, 0)), 0x00ffff);
-    }
+    }*/
     
 
     this.trion = Math.max(0, this.trion - dmg);
@@ -374,6 +415,10 @@ export class Player {
     this.model.rotation.y = this.yaw;
     
     if (id === 'egret') {
+      if (this.bagwormActive) {
+        this.toggleBagworm(true);
+        this.onToast('🧥 狙撃発砲によりバッグワームが自動解除された！');
+      }
       // イーグレット：超長射程・超高速スナイパーライフル
       this.addCameraShake(0.14, 0.10);
       const zoomBonus = this.zoomLevel > 0 ? 1.25 : 1.0;
@@ -381,6 +426,8 @@ export class Player {
         projRadius: 0.16,
         speedOverride: 2.6,
         maxDist: 95,
+        wallDmgMult: 2.2,
+        penetration: 2,
         attackCategory: 'ranged'
       });
     } else if (id === 'asteroid') {
@@ -583,8 +630,8 @@ export class Player {
       });
       this.onToast('🛡️ エスクード展開！');
     } else if (id === 'shield') {
-      this.trionShieldUntil = now + 3000 + Math.min(2000, (lv - 1) * 250);
-      this.trionShieldReduce = Math.min(0.85, 0.55 + (lv - 1) * 0.05);
+      this.trionShieldUntil = now + 3800 + Math.min(2000, (lv - 1) * 250);
+      this.trionShieldReduce = Math.min(0.75, 0.45 + (lv - 1) * 0.04);
       if (!this.shieldBubbleMesh) {
         this.shieldBubbleMesh = new THREE.Mesh(
           new THREE.IcosahedronGeometry(1.35, 1),
@@ -593,12 +640,10 @@ export class Player {
         this.shieldBubbleMesh.position.y = 1.1;
         this.root.add(this.shieldBubbleMesh);
       }
-      this.shieldBubbleMesh.visible = true;
-      this.onToast(`🔷 シールド展開（被ダメ${Math.round(this.trionShieldReduce * 100)}%軽減）`);
-    } else if (id === 'focused_shield') {
-      this.focusedShieldUntil = now + 4000 + Math.min(2000, (lv - 1) * 250);
-      if (this.focusedShieldMesh) this.focusedShieldMesh.visible = true;
-      this.onToast('🛡️ 集中シールド展開');
+      const modeName = this.shieldMode === 'focused' ? '集中（正面完全防御）' : `広域（被ダメ${Math.round(this.trionShieldReduce * 100)}%軽減）`;
+      this.onToast(`🛡️ シールド展開：【${modeName}】（[V]で切替）`);
+    } else if (id === 'bagworm') {
+      this.toggleBagworm();
     } else if (id === 'teleporter') {
       const moveDir = this.getInputMoveDirection();
       const dir = moveDir.lengthSq() > 0
@@ -670,10 +715,12 @@ export class Player {
     }
   }
 
+  // fireIbisCannon(totalDmg) を以下に差し替え（遠距離85m＆2m壁パネル一撃粉砕対応）
   fireIbisCannon(totalDmg) {
+    if (this.bagwormActive) this.toggleBagworm(true);
     this.addCameraShake(0.45, 0.28);
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
-    const length = 55;
+    const length = 85;
 
     const beam = new THREE.Mesh(
       new THREE.CylinderGeometry(1.8, 1.8, length, 16),
@@ -686,6 +733,17 @@ export class Player {
     this.slashEffects.push({ mesh: beam, life: 0.55, maxLife: 0.55 });
 
     const start = this.root.position;
+    // 射線上の破壊可能壁パネル・遮蔽物をすべて粉砕
+    for (const box of [...this.world.destructibles]) {
+      const toB = box.position.clone().sub(start).setY(0);
+      const proj = toB.dot(forward);
+      if (proj < 0 || proj > length) continue;
+      const perp = Math.hypot(toB.x - forward.x * proj, toB.z - forward.z * proj);
+      if (perp <= 2.6) {
+        this.world.damageBlock(box, totalDmg, box.position);
+      }
+    }
+
     for (const e of [...this.enemyManager.enemies]) {
       const toE = e.root.position.clone().sub(start).setY(0);
       const proj = toE.dot(forward);
@@ -873,9 +931,9 @@ export class Player {
       }
 
       if (!hitTarget) {
-     const nearbyWalls = this.world.queryNearbyWalls(p.mesh.position.x, p.mesh.position.z, 2.5);
-     for (const wall of nearbyWalls) {
-       if (p.hitSet.has(wall)) continue;
+        const nearbyWalls = this.world.queryNearbyWalls(p.mesh.position.x, p.mesh.position.z, 2.5);
+        for (const wall of nearbyWalls) {
+          if (p.hitSet.has(wall)) continue;
           const hx = wall.userData.halfX || 1.0;
           const hy = wall.userData.halfY || 1.0;
           const hz = wall.userData.halfZ || 1.0;
@@ -884,7 +942,13 @@ export class Player {
               Math.abs(p.mesh.position.z - wall.position.z) < hz + 0.15) {
             p.hitSet.add(wall);
             if (wall.userData.destructible) {
-              this.world.damageBlock(wall, p.dmg);
+              const wallDmg = Math.round(p.dmg * (p.wallDmgMult || 1.0));
+              this.world.damageBlock(wall, wallDmg, p.mesh.position);
+              if (wall.userData.hp <= 0 && (p.penetration || 0) > 0) {
+                p.penetration--;
+                p.dmg = Math.round(p.dmg * 0.85);
+                continue;
+              }
               if (!p.pierce) { hitTarget = true; break; }
             } else {
               hitTarget = true;
@@ -1020,7 +1084,7 @@ export class Player {
         this.trion = Math.min(mTrion, this.trion + heal);
       }
     }
-    // 集中シールドの向きをカメラの向きに追従
+    // シールドの描写
     if (this.focusedShieldMesh) {
       if (now < this.focusedShieldUntil) {
         this.focusedShieldMesh.visible = true;
@@ -1086,7 +1150,6 @@ export class Player {
           this.velocityY = 0;
         }
         // 床スラブ・階段ステップ着地判定（階段登り対応のため -0.62 まで許容）
-        //if (this.velocityY <= 0 && this.root.position.y >= top - 0.62 && this.root.position.y <= top + 0.25 && prevY >= top - 0.62) {
           if (this.velocityY <= 0 && this.root.position.y >= top - 0.55 && this.root.position.y <= top + 0.28 && prevY >= top - 0.68) {
           groundY = Math.max(groundY, top);
           landed = true;
