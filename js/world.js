@@ -56,7 +56,7 @@ export class World {
       destructibleProp: new THREE.MeshStandardMaterial({
         color: 0xffffff,
         roughness: 0.45
-      })
+      }),
       destructibleWall: new THREE.MeshStandardMaterial({
         map: this.buildingTex,
         color: 0xf1f5f9,
