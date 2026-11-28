@@ -57,6 +57,11 @@ export class World {
         color: 0xffffff,
         roughness: 0.45
       })
+      destructibleWall: new THREE.MeshStandardMaterial({
+        map: this.buildingTex,
+        color: 0xf1f5f9,
+        roughness: 0.52
+      }),
     };
     this.unitBoxGeo = new THREE.BoxGeometry(1, 1, 1);
   }
@@ -413,6 +418,61 @@ export class World {
     this.registerWallToGrid(collider);
     return collider;
   }
+  // ---- 建物の外壁・仕切り壁を約2m×2mの破壊可能パネル単位に分割して配置 ----
+  addDestructibleWallGrid(cx, cy, cz, w, h, d, hp = 65, colorHex = 0xe2e8f0) {
+    const panelTarget = 2.0;
+    const alongX = w >= d;
+    const span = alongX ? w : d;
+    const thick = alongX ? d : w;
+
+    const cols = Math.max(1, Math.round(span / panelTarget));
+    const rows = Math.max(1, Math.round(h / panelTarget));
+    const cellSpan = span / cols;
+    const cellH = h / rows;
+
+    const startSpan = -span / 2 + cellSpan / 2;
+    const startY = cy - h / 2 + cellH / 2;
+
+    for (let r = 0; r < rows; r++) {
+      const py = startY + r * cellH;
+      for (let c = 0; c < cols; c++) {
+        const offset = startSpan + c * cellSpan;
+        const px = alongX ? cx + offset : cx;
+        const pz = alongX ? cz : cz + offset;
+        const pw = alongX ? cellSpan - 0.03 : thick;
+        const pd = alongX ? thick : cellSpan - 0.03;
+
+        const ref = this.queueInstance(
+          'destructibleWall',
+          this.sharedMats.destructibleWall,
+          px, py, pz,
+          pw, cellH - 0.03, pd,
+          colorHex,
+          false
+        );
+
+        const collider = {
+          position: new THREE.Vector3(px, py, pz),
+          material: { transparent: false },
+          userData: {
+            isInstancedProxy: true,
+            batchKey: ref.batchKey,
+            instanceIndex: ref.index,
+            halfX: pw / 2,
+            halfY: cellH / 2,
+            halfZ: pd / 2,
+            destructible: true,
+            hp,
+            maxHp: hp
+          }
+        };
+
+        this.walls.push(collider);
+        this.destructibles.push(collider);
+        this.registerWallToGrid(collider);
+      }
+    }
+  }
 
   // ---- ボーダー本部基地（エリア0） ----
   buildBase() {
@@ -543,7 +603,6 @@ export class World {
     }
   }
 
-  // ---- 市街地ランク戦フィールド（商業ビル街） ----
   // ---- 超広大・高密度：市街地ランク戦フィールド（商業ビル9棟） ----
   buildCityArena(floor) {
     this.portalLocked = true;
@@ -1026,11 +1085,26 @@ export class World {
         }
       }
 
-      const sideSeg = (size - doorW) / 2;
+      // 四隅の構造柱（不壊：壁が破壊されても建物の骨格が残る）
+      const cornerPillar = 1.1;
+      [-1, 1].forEach((sx) => {
+        [-1, 1].forEach((sz) => {
+          this.addSolidBox(
+            cx + sx * (halfS - cornerPillar / 2),
+            wallCenterY,
+            cz + sz * (halfS - cornerPillar / 2),
+            cornerPillar, wallH, cornerPillar, wallMat
+          );
+        });
+      });
+
+      // 南北の外壁（2mパネル単位で破壊可能）
+      const sideSeg = (size - doorW) / 2 - cornerPillar;
+      const sideOffset = doorW / 2 + sideSeg / 2;
       [-1, 1].forEach((zSign) => {
         const wz = cz + zSign * (halfS - wallThick / 2);
-        this.addSolidBox(cx - halfS + sideSeg / 2, wallCenterY, wz, sideSeg, wallH, wallThick, wallMat);
-        this.addSolidBox(cx + halfS - sideSeg / 2, wallCenterY, wz, sideSeg, wallH, wallThick, wallMat);
+        this.addDestructibleWallGrid(cx - sideOffset, wallCenterY, wz, sideSeg, wallH, wallThick, 70, 0xe2e8f0);
+        this.addDestructibleWallGrid(cx + sideOffset, wallCenterY, wz, sideSeg, wallH, wallThick, 70, 0xe2e8f0);
         this.addSolidBox(cx, baseY + wallH - 0.75, wz, doorW, 1.5, wallThick, wallMat);
 
         if (f > 0) {
@@ -1038,19 +1112,24 @@ export class World {
         }
       });
 
+      // 東西の外壁（2mパネル単位で破壊可能）
       [-1, 1].forEach((xSign) => {
         const wx = cx + xSign * (halfS - wallThick / 2);
+        this.addDestructibleWallGrid(wx, wallCenterY, cz - sideOffset, wallThick, wallH, sideSeg, 70, 0xe2e8f0);
+        this.addDestructibleWallGrid(wx, wallCenterY, cz + sideOffset, wallThick, wallH, sideSeg, 70, 0xe2e8f0);
+
         if (f === 0) {
-          this.addSolidBox(wx, wallCenterY, cz - halfS + sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
-          this.addSolidBox(wx, wallCenterY, cz + halfS - sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
           this.addSolidBox(wx, baseY + wallH - 0.75, cz, wallThick, 1.5, doorW, wallMat);
         } else {
-          this.addSolidBox(wx, wallCenterY, cz - halfS + sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
-          this.addSolidBox(wx, wallCenterY, cz + halfS - sideSeg / 2, wallThick, wallH, sideSeg, wallMat);
-          this.addDestructibleBlock(wx, baseY + 1.2, cz - 1.2, 0x38bdf8, 45);
-          this.addDestructibleBlock(wx, baseY + 1.2, cz + 1.2, 0x38bdf8, 45);
+          this.addDestructibleWallGrid(wx, wallCenterY, cz, wallThick, wallH, doorW, 55, 0xbae6fd);
         }
       });
+
+      // 室内の破壊可能な仕切り壁（通常ビルの1・2階に戦術パーティション配置）
+      if (!isCentralMall) {
+        this.addDestructibleWallGrid(cx - 3.5, baseY + 2.0, cz - 2.5, 6.0, 4.0, 0.45, 50, 0xcbd5e1);
+        this.addDestructibleWallGrid(cx - 3.5, baseY + 2.0, cz + 2.5, 6.0, 4.0, 0.45, 50, 0xcbd5e1);
+      }
 
       const colOff = isCentralMall ? 9.5 : 4.8;
       this.addSolidBox(cx - colOff, wallCenterY, cz - colOff, 1.1, wallH, 1.1, wallMat);
@@ -1097,11 +1176,12 @@ export class World {
       this.addSolidBox(stairCenterX - stairWellW / 2, roofY + 0.55, cz, 0.25, 1.1, stairTotalLen, glassRailMat, {}, false);
     }
 
-    const paraH = 1.15;
-    this.addSolidBox(cx, roofY + paraH / 2, cz - halfS + 0.35, size, paraH, 0.7, wallMat);
-    this.addSolidBox(cx, roofY + paraH / 2, cz + halfS - 0.35, size, paraH, 0.7, wallMat);
-    this.addSolidBox(cx - halfS + 0.35, roofY + paraH / 2, cz, 0.7, paraH, size - 1.4, wallMat);
-    this.addSolidBox(cx + halfS - 0.35, roofY + paraH / 2, cz, 0.7, paraH, size - 1.4, wallMat);
+    // 屋上パラペット（手すり壁も2mパネルで破壊可能にして狙撃窓を作れる）
+    const paraH = 1.2;
+    this.addDestructibleWallGrid(cx, roofY + paraH / 2, cz - halfS + 0.35, size, paraH, 0.7, 50, 0x94a3b8);
+    this.addDestructibleWallGrid(cx, roofY + paraH / 2, cz + halfS - 0.35, size, paraH, 0.7, 50, 0x94a3b8);
+    this.addDestructibleWallGrid(cx - halfS + 0.35, roofY + paraH / 2, cz, 0.7, paraH, size - 1.4, 50, 0x94a3b8);
+    this.addDestructibleWallGrid(cx + halfS - 0.35, roofY + paraH / 2, cz, 0.7, paraH, size - 1.4, 50, 0x94a3b8);
 
     this.addSolidBox(cx - halfS + 3.5, roofY + 1.1, cz - halfS + 3.5, 2.8, 2.2, 2.2, railMat);
     this.addDestructibleBlock(cx - halfS + 3.5, roofY + HALF, cz + halfS - 3.5, 0x38bdf8, 55);
@@ -1172,10 +1252,11 @@ export class World {
   damageBlock(wallObj, dmg, hitPoint) {
     if (!wallObj || !wallObj.userData || !wallObj.userData.destructible) return;
     wallObj.userData.hp -= dmg;
-    this.spawnHitSpark(hitPoint || wallObj.position, 0x38bdf8);
+    this.spawnHitSpark(hitPoint || wallObj.position, 0x38bdf8, 5);
 
     if (wallObj.userData.hp <= 0) {
-      this.spawnHitSpark(wallObj.position, 0x7dd3fc, 14);
+      const debrisColor = wallObj.userData.batchKey === 'destructibleWall' ? 0xcbd5e1 : 0x7dd3fc;
+      this.spawnHitSpark(wallObj.position, debrisColor, 14);
       if (wallObj.userData.isInstancedProxy) {
         this.hideInstance(wallObj.userData.batchKey, wallObj.userData.instanceIndex);
       } else {
