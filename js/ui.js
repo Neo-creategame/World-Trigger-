@@ -591,7 +591,12 @@ export class UIManager {
     ctx.fill();
 
     // 敵反応（赤点）
+    // 敵反応（赤点：バッグワーム中は視線LOSまたはレーダー展開時のみ表示）
+    const radarActive = this.player.radarUntil > performance.now();
     for (const e of this.enemyManager.enemies) {
+      const canDetect = radarActive || !e.bagwormActive || this.world.hasLineOfSight(pPos, e.root.position);
+      if (!canDetect) continue;
+
       const ex = cx + (e.root.position.x - pPos.x) * scale;
       const ey = cy + (e.root.position.z - pPos.z) * scale;
       if (ex < 0 || ex > w || ey < 0 || ey > h) continue;
@@ -605,7 +610,7 @@ export class UIManager {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(-this.player.yaw);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = this.player.bagwormActive ? 'rgba(148, 163, 184, 0.45)' : '#ffffff';
     ctx.beginPath();
     ctx.moveTo(0, -6);
     ctx.lineTo(4, 5);
