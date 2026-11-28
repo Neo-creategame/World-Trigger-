@@ -270,6 +270,8 @@ export class EnemyManager {
     for (const agent of this.enemies) {
       if (!agent.isRivalAgent || agent.hp <= 0 || now < agent.stunUntil) continue;
       const dist = agent.root.position.distanceTo(playerPos);
+      const reactLimit = playerRef && playerRef.bagwormActive ? 14 : 32;
+      if (dist > reactLimit) continue;
       if (dist > 32) continue;
 
       if (Math.random() < agent.aiReaction) {
@@ -536,6 +538,14 @@ export class EnemyManager {
 
     agent.aiDecisionTimer -= dt;
     const hasLOS = this.world.hasLineOfSight(aPos, pPos);
+    // プレイヤーがバッグワーム装着中はレーダー索敵が効かず、近距離で視線が通らないと発見できない
+    const isStealthedFromAI = player.bagwormActive && (!hasLOS || horizDist > 16.0);
+    if (isStealthedFromAI && agent.aiState !== 'windup') {
+      agent.aiDecisionTimer -= dt;
+      const idleRight = new THREE.Vector3(-dirHoriz.z, 0, dirHoriz.x).multiplyScalar(agent.strafeSign);
+      this.applyAgentPhysics(agent, idleRight.multiplyScalar(agent.speed * 0.45));
+      return;
+    }
 
     if (agent.aiDecisionTimer <= 0) {
       agent.aiDecisionTimer = 0.35 + Math.random() * 0.25;
@@ -836,47 +846,43 @@ export class EnemyManager {
   }
   // 訓練室（模擬戦）用のカスタム敵スポーン（1〜4人チーム戦対応）
   spawnTrainingMatch(enemySpawns, count = 2, rankTier = 2) {
-    // 既存の敵機・弾・エフェクトをクリーンアップ
-    if (typeof this.clearEnemies === 'function') {
-      this.clearEnemies();
-    } else if (Array.isArray(this.enemies)) {
-      for (const e of this.enemies) {
-        if (e.mesh && e.mesh.parent) this.scene.remove(e.mesh);
-        if (e.root && e.root.parent) this.scene.remove(e.root);
-        if (e.shieldMesh && e.shieldMesh.parent) this.scene.remove(e.shieldMesh);
-      }
-      this.enemies.length = 0;
-    }
-
-    const archetypes = [
-      { name: '村上 鋼（アタッカー）', role: 'attacker', color: 0x38bdf8, weapon: 'kogetsu' },
-      { name: '荒船 哲次（スナイパー）', role: 'sniper', color: 0x0ea5e9, weapon: 'egret' },
-      { name: '二宮 匡貴（シューター）', role: 'shooter', color: 0x6366f1, weapon: 'hound' },
-      { name: '弓場 拓磨（ガンナー）', role: 'gunner', color: 0xf97316, weapon: 'asteroid' }
-    ];
+    this.clearAll();
 
     const spawns = (enemySpawns && enemySpawns.length > 0)
       ? enemySpawns
       : [new THREE.Vector3(0, 0, -40)];
 
     for (let i = 0; i < count; i++) {
-      const arch = archetypes[i % archetypes.length];
+      const arch = RIVAL_ARCHETYPES[(rankTier - 1 + i) % RIVAL_ARCHETYPES.length];
+      const tierIdx = Math.min(arch.names.length - 1, Math.floor((rankTier - 1) / 4));
+      const rivalName = `【模擬.${i + 1}】${arch.names[tierIdx]}`;
       const pos = spawns[i % spawns.length].clone();
-      // 複数人同時スポーン時に重ならないよう少し位置をずらす
       pos.x += (i - (count - 1) / 2) * 3.5;
 
-      const hpMult = 0.85 + rankTier * 0.35;
-      const atkMult = 0.85 + rankTier * 0.25;
-      if (typeof this.spawnOne === 'function') {
-        this.spawnOne(pos, rankTier, arch, hpMult, atkMult);
-      } else {
-        // 既存spawnForFloorがthis.enemiesをクリアしないよう一時退避して追加
-        const prev = Array.isArray(this.enemies) ? [...this.enemies] : [];
-        this.spawnForFloor(rankTier, pos, [pos]);
-        if (Array.isArray(this.enemies) && prev.length > 0) {
-          this.enemies = [...prev, ...this.enemies];
-        }
-      }
+      const baseTrion = 300 + (rankTier - 1) * 90;
+      const maxHp = Math.round(baseTrion * arch.trionMult);
+      const atk = Math.round((22 + (rankTier - 1) * 5) * arch.powerMult);
+
+      const agent = this.createRivalAgent({
+        name: rivalName,
+        role: arch.role,
+        x: pos.x,
+        y: pos.y || 0,
+        z: pos.z,
+        color: arch.color,
+        visorColor: arch.visorColor,
+        scale: 1.0,
+        hp: maxHp,
+        maxHp,
+        aiTrion: maxHp,
+        aiMaxTrion: maxHp,
+        atk,
+        speed: arch.speed,
+        preferredDist: arch.preferredDist,
+        aiReaction: Math.min(0.95, arch.aiReaction + rankTier * 0.015),
+        floor: rankTier
+      });
+      if (i === 0) this.activeBoss = agent;
     }
   }
 }
