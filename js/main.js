@@ -309,6 +309,82 @@ window.unlockAllTriggers = () => {
   saveGame();
   showToast('💠 全トリガーを解放しました！');
 };
+// ==========================================
+// 訓練室（模擬戦シミュレーター）UI ＆ 起動処理
+// ==========================================
+function openTrainingRoomModal() {
+  if (document.pointerLockElement) document.exitPointerLock();
+
+  let modal = document.getElementById('training-room-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'training-room-modal';
+    modal.style.cssText = `
+      position:fixed; inset:0; background:rgba(9,14,26,0.85); z-index:9999;
+      display:flex; align-items:center; justify-content:center; font-family:sans-serif; color:#e2e8f0;
+    `;
+    modal.innerHTML = `
+      <div style="background:#0f172a; border:2px solid #38bdf8; border-radius:12px; padding:24px 28px; width:440px; max-width:92vw; box-shadow:0 0 30px rgba(56,189,248,0.3);">
+        <h2 style="margin:0 0 8px; color:#38bdf8; font-size:20px;">🎯 ボーダー訓練室（模擬戦設定）</h2>
+        <p style="margin:0 0 18px; font-size:13px; color:#94a3b8;">フィールド環境と対戦AI編成を選択して模擬戦を開始します。</p>
+
+        <label style="display:block; font-size:13px; margin-bottom:6px; color:#7dd3fc;">■ 模擬戦フィールド選択</label>
+        <select id="tr-map-select" style="width:100%; padding:10px; margin-bottom:14px; background:#1e293b; color:#fff; border:1px solid #475569; border-radius:6px; font-size:14px;">
+          <option value="industrial">🏭 工業地区（220m×220m・大型プラント＆高架パイプ・チーム戦向け）</option>
+          <option value="residential">🌇 夕暮れの住宅街（184m×184m・1階4.6m住宅52棟＆河川敷）</option>
+          <option value="city">🏙️ 商業オフィスビル街（184m×184m・多層ビル9棟＆連絡橋）</option>
+        </select>
+
+        <label style="display:block; font-size:13px; margin-bottom:6px; color:#7dd3fc;">■ 対戦AI人数（スクワッド規模）</label>
+        <select id="tr-count-select" style="width:100%; padding:10px; margin-bottom:14px; background:#1e293b; color:#fff; border:1px solid #475569; border-radius:6px; font-size:14px;">
+          <option value="1">1 vs 1（タイマン模擬戦）</option>
+          <option value="2" selected>1 vs 2（ツーマンセル連携戦）</option>
+          <option value="3">1 vs 3（B級上位部隊戦）</option>
+          <option value="4">1 vs 4（フルスクワッド総力戦）</option>
+        </select>
+
+        <label style="display:block; font-size:13px; margin-bottom:6px; color:#7dd3fc;">■ AI強さランク</label>
+        <select id="tr-rank-select" style="width:100%; padding:10px; margin-bottom:20px; background:#1e293b; color:#fff; border:1px solid #475569; border-radius:6px; font-size:14px;">
+          <option value="1">C級〜B級下位相当（標準）</option>
+          <option value="3" selected>B級上位相当（高機動・高精度）</option>
+          <option value="6">A級精鋭相当（高耐久・高火力）</option>
+        </select>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button id="tr-cancel-btn" style="padding:10px 16px; background:#334155; color:#e2e8f0; border:none; border-radius:6px; cursor:pointer;">閉じる</button>
+          <button id="tr-start-btn" style="padding:10px 20px; background:#0284c7; color:#fff; font-weight:bold; border:none; border-radius:6px; cursor:pointer;">模擬戦スタート！</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    document.getElementById('tr-cancel-btn').onclick = () => {
+      modal.style.display = 'none';
+    };
+
+    document.getElementById('tr-start-btn').onclick = () => {
+      const mapId = document.getElementById('tr-map-select').value;
+      const count = parseInt(document.getElementById('tr-count-select').value, 10) || 2;
+      const rankTier = parseInt(document.getElementById('tr-rank-select').value, 10) || 3;
+      modal.style.display = 'none';
+
+      // マップ構築＆プレイヤー初期位置移動
+      const layout = world.buildFloor(rankTier, mapId);
+      player.root.position.copy(layout.playerStart);
+      player.velocityY = 0;
+      player.trion = maxTrion();
+
+      // 訓練室AIスポーン
+      enemyManager.spawnTrainingMatch(layout.enemySpawns, count, rankTier);
+
+      const mapNames = { industrial: '工業地区', residential: '夕暮れの住宅街', city: '商業ビル街' };
+      showToast(`🎯 訓練開始：【${mapNames[mapId]}】敵AI ${count}機 転送完了！`);
+    };
+  }
+  modal.style.display = 'flex';
+}
+
+window.addEventListener('open-training-room', openTrainingRoomModal);
 function animate() {
   requestAnimationFrame(animate);
 
