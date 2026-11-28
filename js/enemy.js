@@ -836,7 +836,18 @@ export class EnemyManager {
   }
   // 訓練室（模擬戦）用のカスタム敵スポーン（1〜4人チーム戦対応）
   spawnTrainingMatch(enemySpawns, count = 2, rankTier = 2) {
-    this.clear();
+    // 既存の敵機・弾・エフェクトをクリーンアップ
+    if (typeof this.clearEnemies === 'function') {
+      this.clearEnemies();
+    } else if (Array.isArray(this.enemies)) {
+      for (const e of this.enemies) {
+        if (e.mesh && e.mesh.parent) this.scene.remove(e.mesh);
+        if (e.root && e.root.parent) this.scene.remove(e.root);
+        if (e.shieldMesh && e.shieldMesh.parent) this.scene.remove(e.shieldMesh);
+      }
+      this.enemies.length = 0;
+    }
+
     const archetypes = [
       { name: '村上 鋼（アタッカー）', role: 'attacker', color: 0x38bdf8, weapon: 'kogetsu' },
       { name: '荒船 哲次（スナイパー）', role: 'sniper', color: 0x0ea5e9, weapon: 'egret' },
@@ -859,8 +870,12 @@ export class EnemyManager {
       if (typeof this.spawnOne === 'function') {
         this.spawnOne(pos, rankTier, arch, hpMult, atkMult);
       } else {
-        // 既存spawnForFloor互換フォールバック
+        // 既存spawnForFloorがthis.enemiesをクリアしないよう一時退避して追加
+        const prev = Array.isArray(this.enemies) ? [...this.enemies] : [];
         this.spawnForFloor(rankTier, pos, [pos]);
+        if (Array.isArray(this.enemies) && prev.length > 0) {
+          this.enemies = [...prev, ...this.enemies];
+        }
       }
     }
   }
