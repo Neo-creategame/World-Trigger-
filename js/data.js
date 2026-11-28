@@ -82,13 +82,13 @@ export const TRIGGER_LIST = {
   },
   shield: {
     id: 'shield', slotType: 'skill', name: 'シールド',
-    cd: 5000, cost: 10,
-    desc: '3秒間全身にトリオン障壁を展開し被ダメ大幅軽減（消費: 10 / LvUPで軽減率UP）'
+    cd: 4200, cost: 15,
+    desc: '可変トリオン障壁。[V]キーで【集中（正面完全防御）】と【広域（全周囲軽減）】を切替（消費: 15）'
   },
-  focused_shield: {
-    id: 'focused_shield', slotType: 'skill', name: '集中シールド',
-    cd: 4200, cost: 20,
-    desc: '4秒間正面一点に小型高耐久シールドを固定。正面からの攻撃を90%カット＆弾き返す（消費: 20）'
+  bagworm: {
+    id: 'bagworm', slotType: 'skill', name: 'バッグワーム',
+    cd: 600, cost: 5,
+    desc: '着脱式隠密マント。レーダーから反応を消去し敵AIの索敵範囲を大幅縮小（維持: 2/秒）'
   },
   teleporter: {
     id: 'teleporter', slotType: 'skill', name: 'テレポーター',
