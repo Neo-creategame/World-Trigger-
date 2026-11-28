@@ -285,11 +285,11 @@ export class World {
     }
   }
 
-  buildFloor(floor) {
+  buildFloor(floor, mapOverride = null) {
     this.clearDungeon();
 
     const floorMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(420, 420),
+      new THREE.PlaneGeometry(520, 520),
       new THREE.MeshStandardMaterial({ map: this.roadTex, roughness: 0.85 })
     );
     floorMesh.rotation.x = -Math.PI / 2;
@@ -298,8 +298,16 @@ export class World {
     this.dungeonMeshes.push(floorMesh);
 
     let layout;
-    if (floor === 0) {
+    if (mapOverride === 'city') {
+      layout = this.buildCityArena(floor);
+    } else if (mapOverride === 'residential') {
+      layout = this.buildResidentialArena(floor);
+    } else if (mapOverride === 'industrial') {
+      layout = this.buildIndustrialArena(floor);
+    } else if (floor === 0) {
       layout = this.buildBase();
+    } else if (floor % 3 === 0) {
+      layout = this.buildIndustrialArena(floor);
     } else if (floor % 2 === 0) {
       layout = this.buildResidentialArena(floor);
     } else {
@@ -775,6 +783,116 @@ export class World {
       new THREE.Vector3(-34, 6.0, -32), // 北西高台2階屋根上
       new THREE.Vector3(34, 6.0, -32),  // 北東高台2階屋根上
       new THREE.Vector3(18, 6.0, 24)    // 南東高台2階屋根上
+    ];
+    const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
+
+    return {
+      playerStart,
+      rivalStart,
+      spawnPos: playerStart,
+      enemySpawns: candidateSpawns
+    };
+  }
+  // ---- チーム戦対応・超広大「工業地区」マップ（220m × 220m） ----
+  buildIndustrialArena(floor) {
+    this.portalLocked = true;
+
+    // 工業地帯らしいスモッグがかった重厚な空色
+    const indSky = 0x16202a;
+    this.scene.background = new THREE.Color(indSky);
+    if (this.scene.fog) {
+      this.scene.fog.color.setHex(indSky);
+    }
+
+    const arenaHalf = 110; // 220m × 220m のチーム戦スケール
+    const wallH = 16;
+    const wallMat = this.sharedMats.wall;
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.4, roughness: 0.5 });
+    const tankMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.35, roughness: 0.4 });
+    const pipeMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b,
+      emissive: 0xd97706,
+      emissiveIntensity: 0.2,
+      roughness: 0.4
+    });
+
+    // 外周バリア壁
+    this.addSolidBox(0, wallH / 2, -arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
+    this.addSolidBox(0, wallH / 2, arenaHalf, arenaHalf * 2, wallH, 1.5, wallMat);
+    this.addSolidBox(-arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
+    this.addSolidBox(arenaHalf, wallH / 2, 0, 1.5, wallH, arenaHalf * 2, wallMat);
+
+    // 1. 進入可能な大型工場・プラント建屋（計5棟）
+    this.buildEnterableBuilding(0, 0, 2, 32, true);       // 中央メインプラント（2層吹き抜け・32m四方）
+    this.buildEnterableBuilding(-58, -56, 3, 26, false);  // 北西第1工場棟（3層・狙撃高台）
+    this.buildEnterableBuilding(58, -56, 2, 26, false);   // 北東第2工場棟（2層）
+    this.buildEnterableBuilding(-58, 56, 2, 26, false);   // 南西物流倉庫（2層）
+    this.buildEnterableBuilding(58, 56, 3, 26, false);    // 南東管制プラント（3層）
+
+    // 2. プラント同士を結ぶ高架キャットウォーク（地上13m・立体機動＆チーム進軍ルート）
+    this.buildSkyBridge(-45, -56, 45, -56, 13.0, 4.0);
+    this.buildSkyBridge(-45, 56, 45, 56, 13.0, 4.0);
+    this.buildSkyBridge(-58, -43, -58, 43, 13.0, 4.0);
+    this.buildSkyBridge(58, -43, 58, 43, 13.0, 4.0);
+    this.buildSkyBridge(-45, 0, -16, 0, 13.0, 3.6);
+    this.buildSkyBridge(16, 0, 45, 0, 13.0, 3.6);
+
+    // 3. 巨大燃料タンク群（スナイパーの拠点＆視線遮蔽）
+    const tankPositions = [
+      { x: -30, z: -30, h: 11 }, { x: -20, z: -30, h: 11 },
+      { x: 30, z: -30, h: 11 },  { x: 20, z: -30, h: 11 },
+      { x: -30, z: 30, h: 11 },  { x: -20, z: 30, h: 11 },
+      { x: 30, z: 30, h: 11 },   { x: 20, z: 30, h: 11 }
+    ];
+    tankPositions.forEach((t) => {
+      this.addSolidBox(t.x, t.h / 2, t.z, 7.2, t.h, 7.2, tankMat);
+      this.addSolidBox(t.x, t.h + 0.3, t.z, 7.6, 0.4, 7.6, pipeMat, {}, false);
+    });
+
+    // 4. 東西南北に走る高架パイプライン（グラスホッパーで上に乗れる狙撃レール）
+    this.addSolidBox(0, 7.2, -32, 180, 1.4, 1.4, pipeMat, {}, false);
+    this.addSolidBox(0, 7.2, 32, 180, 1.4, 1.4, pipeMat, {}, false);
+    this.addSolidBox(-32, 7.2, 0, 1.4, 1.4, 180, pipeMat, {}, false);
+    this.addSolidBox(32, 7.2, 0, 1.4, 1.4, 180, pipeMat, {}, false);
+
+    // 5. 貨物コンテナヤード（破壊可能な大型コンテナ遮蔽物）
+    const containerCoords = [
+      { x: -84, z: -16, rot: false, col: 0x0284c7 },
+      { x: -84, z: -8,  rot: false, col: 0xd97706 },
+      { x: -84, z: 12,  rot: false, col: 0x334155 },
+      { x: 84, z: -16,  rot: false, col: 0xdc2626 },
+      { x: 84, z: -8,   rot: false, col: 0x0284c7 },
+      { x: 84, z: 12,   rot: false, col: 0x475569 },
+      { x: -14, z: -84, rot: true,  col: 0xd97706 },
+      { x: 14, z: -84,  rot: true,  col: 0x0284c7 },
+      { x: -14, z: 84,  rot: true,  col: 0x334155 },
+      { x: 14, z: 84,   rot: true,  col: 0xdc2626 }
+    ];
+    containerCoords.forEach((c) => {
+      const w = c.rot ? 3.2 : 8.5;
+      const d = c.rot ? 8.5 : 3.2;
+      this.addDestructibleProp(c.x, 1.6, c.z, w, 3.2, d, c.col, 130);
+    });
+
+    // トリオン供給コンテナ＆作業車両
+    [
+      [-18, -18, 0x334155], [18, 18, 0x1e3a8a],
+      [-45, 22, 0x475569], [45, -22, 0x0f172a]
+    ].forEach(([cx, cz, cc]) => this.addDestructibleCar(cx, cz, true, cc));
+
+    this.createPortal(0, 1.8, -96, true);
+
+    // チーム戦想定の広域スポーン（南側チーム拠点 vs 北側・東西チーム拠点）
+    const playerStart = new THREE.Vector3(0, 0, 94);
+    const candidateSpawns = [
+      new THREE.Vector3(0, 0, -88),       // 北側チーム拠点
+      new THREE.Vector3(-86, 0, -56),     // 北西コンテナヤード
+      new THREE.Vector3(86, 0, -56),      // 北東コンテナヤード
+      new THREE.Vector3(-86, 0, 24),      // 南西ヤード
+      new THREE.Vector3(86, 0, 24),       // 南東ヤード
+      new THREE.Vector3(-58, 19.5, -56),  // 北西工場3階屋上（スナイパー高台）
+      new THREE.Vector3(58, 19.5, 56),    // 南東プラント3階屋上
+      new THREE.Vector3(0, 13.0, 0)       // 中央プラント2階デッキ
     ];
     const rivalStart = candidateSpawns[(floor - 1) % candidateSpawns.length].clone();
 
