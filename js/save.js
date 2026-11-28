@@ -31,6 +31,7 @@ export const state = {
   ownedTriggers: {
     kogetsu: 1,
     asteroid: 1,
+    bagworm: 1,
     shield: 1,
     egret: 1,
     ibis: 1
@@ -79,8 +80,20 @@ export function loadGame() {
 
     SAVE.cleared = data.cleared || 0;
     if (data.player) Object.assign(PLAYER, data.player);
-    if (data.triggerSlots) Object.assign(TRIGGER_SLOTS, data.triggerSlots);
-    if (data.ownedTriggers) Object.assign(state.ownedTriggers, data.ownedTriggers);
+    if (data.triggerSlots) {
+      Object.assign(TRIGGER_SLOTS, data.triggerSlots);
+      Object.keys(TRIGGER_SLOTS).forEach((k) => {
+        if (TRIGGER_SLOTS[k] === 'focused_shield') TRIGGER_SLOTS[k] = 'shield';
+      });
+    }
+    if (data.ownedTriggers) {
+      Object.assign(state.ownedTriggers, data.ownedTriggers);
+      if (state.ownedTriggers.focused_shield) {
+        state.ownedTriggers.shield = Math.max(state.ownedTriggers.shield || 1, state.ownedTriggers.focused_shield);
+        delete state.ownedTriggers.focused_shield;
+      }
+      if (!state.ownedTriggers.bagworm) state.ownedTriggers.bagworm = 1;
+    }
     if (data.exsGauge != null) state.exsGauge = data.exsGauge;
     return true;
   } catch (e) {
