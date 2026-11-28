@@ -1124,6 +1124,8 @@ export class World {
     } else if (item.type === 'supply_terminal') {
       if (player) player.trion = maxTrionVal;
       this.onToast('⚡ トリオン体を100%まで急速充填しました！');
+    } else if (item.type === 'training_terminal') {
+      window.dispatchEvent(new CustomEvent('open-training-room'));
     }
   }
 
