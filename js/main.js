@@ -28,7 +28,7 @@ dirLight.shadow.camera.right = d;
 dirLight.shadow.camera.top = d;
 dirLight.shadow.camera.bottom = -d;
 scene.add(dirLight);
-
+scene.fog = new THREE.FogExp2(0x0b0d12, 0.0075);
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 240);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -283,8 +283,11 @@ function updateHud(now) {
 
   if (now < slowMoUntil) statusSpan.textContent = '⚡ 緊急回避スロー';
   else if (now < player.dodgeUntil) statusSpan.textContent = 'ステップ移動中';
-  else if (now < player.focusedShieldUntil) statusSpan.textContent = '🛡️ 集中シールド展開中';
-  else if (now < player.trionShieldUntil) statusSpan.textContent = '🔷 シールド展開中';
+  else if (now < player.trionShieldUntil) {
+    statusSpan.textContent = player.shieldMode === 'focused'
+      ? '🛡️ シールド【集中】(Vで切替)'
+      : '🌐 シールド【広域】(Vで切替)';
+  } else if (player.bagwormActive) statusSpan.textContent = '🧥 バッグワーム隠密中';
   else if (player.zoomLevel > 0) statusSpan.textContent = '🎯 スコープ照準中';
   else statusSpan.textContent = '戦闘待機';
 
