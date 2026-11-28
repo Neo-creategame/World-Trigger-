@@ -834,4 +834,34 @@ export class EnemyManager {
       return true;
     });
   }
+  // 訓練室（模擬戦）用のカスタム敵スポーン（1〜4人チーム戦対応）
+  spawnTrainingMatch(enemySpawns, count = 2, rankTier = 2) {
+    this.clear();
+    const archetypes = [
+      { name: '村上 鋼（アタッカー）', role: 'attacker', color: 0x38bdf8, weapon: 'kogetsu' },
+      { name: '荒船 哲次（スナイパー）', role: 'sniper', color: 0x0ea5e9, weapon: 'egret' },
+      { name: '二宮 匡貴（シューター）', role: 'shooter', color: 0x6366f1, weapon: 'hound' },
+      { name: '弓場 拓磨（ガンナー）', role: 'gunner', color: 0xf97316, weapon: 'asteroid' }
+    ];
+
+    const spawns = (enemySpawns && enemySpawns.length > 0)
+      ? enemySpawns
+      : [new THREE.Vector3(0, 0, -40)];
+
+    for (let i = 0; i < count; i++) {
+      const arch = archetypes[i % archetypes.length];
+      const pos = spawns[i % spawns.length].clone();
+      // 複数人同時スポーン時に重ならないよう少し位置をずらす
+      pos.x += (i - (count - 1) / 2) * 3.5;
+
+      const hpMult = 0.85 + rankTier * 0.35;
+      const atkMult = 0.85 + rankTier * 0.25;
+      if (typeof this.spawnOne === 'function') {
+        this.spawnOne(pos, rankTier, arch, hpMult, atkMult);
+      } else {
+        // 既存spawnForFloor互換フォールバック
+        this.spawnForFloor(rankTier, pos, [pos]);
+      }
+    }
+  }
 }
