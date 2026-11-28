@@ -40,6 +40,7 @@ export class Player {
 
     this.velocityY = 0;
     this.onGround = false;
+    this.airHopCount = 0;
 
     this.yaw = 0;
     this.pitch = 0.25;
@@ -441,14 +442,21 @@ export class Player {
     const now = performance.now();
     if (!freeCast) {
       const nextTime = optIdx >= 0 ? this.nextOptTimes[optIdx] : this[timerProp];
-      // グラスホッパーは空中連続跳躍できるよう dodgeUntil の硬直制限を免除
       if (now < nextTime || (id !== 'grasshopper' && now < this.dodgeUntil)) return;
-      if (!this.consumeTrion(tr.cost)) return;
+
+      // グラスホッパーの滞空回数制限チェック（着地までに最大3回まで）
+      if (id === 'grasshopper' && this.airHopCount >= 3) {
+        this.onToast('⚠️ 着地するまでグラスホッパーは再展開できない！');
+        return;
+      }
+
+      // 空中連続使用時はトリオン消費量が1.5倍になる
+      const costMult = (id === 'grasshopper' && this.airHopCount > 0) ? 1.5 : 1.0;
+      if (!this.consumeTrion(tr.cost * costMult)) return;
 
       const lv = (state.ownedTriggers && state.ownedTriggers[id]) || 1;
       const lvCdMult = Math.max(0.65, 1 - (lv - 1) * 0.04);
-      // グラスホッパーは多段ジャンプ用にクールタイムを短縮（約0.35秒〜）
-      const baseCd = id === 'grasshopper' ? Math.min(tr.cd, 480) : tr.cd;
+      const baseCd = id === 'grasshopper' ? Math.min(tr.cd, 520) : tr.cd;
       const cdVal = Math.round(baseCd * lvCdMult);
 
       if (optIdx >= 0) this.nextOptTimes[optIdx] = now + cdVal;
@@ -532,6 +540,10 @@ export class Player {
         pierce: true, maxDist: 22, attackCategory: 'skill'
       });
     } else if (id === 'grasshopper') {
+      // 連続跳躍回数に応じて上昇力を減衰（1回目:1.0倍 → 2回目:0.75倍 → 3回目:0.55倍）
+      const decay = [1.0, 0.75, 0.55][this.airHopCount] || 0.55;
+      this.airHopCount++;
+
       // 足元にトリオン踏み台（緑のリング）を展開
       const pad = new THREE.Mesh(
         new THREE.RingGeometry(0.45, 1.75, 24),
@@ -543,18 +555,18 @@ export class Player {
       this.slashEffects.push({ mesh: pad, life: 0.45, maxLife: 0.45 });
 
       const moveDir = this.getInputMoveDirection();
-      this.invulnUntil = Math.max(this.invulnUntil, now + 350);
+      this.invulnUntil = Math.max(this.invulnUntil, now + 300);
       this.onGround = false;
 
       if (moveDir.lengthSq() > 0) {
-        // 移動キー入力あり：斜め前方への立体跳躍（屋根飛び移り・高所駆け上がり用）
+        // 斜め前方への立体跳躍（屋根飛び移り用）
         this.dodgeDir.copy(moveDir).normalize();
         this.dodgeUntil = now + 260;
-        this.velocityY = Math.max(0.32, this.velocityY + 0.30);
+        this.velocityY = Math.max(0.30 * decay, this.velocityY + 0.28 * decay);
       } else {
-        // ニュートラル入力：真上への連続ハイジャンプ（空中で踏み台を蹴ってさらに上昇）
-        const boost = 0.44 + Math.min(0.15, lv * 0.02);
-        this.velocityY = Math.max(boost, this.velocityY * 0.35 + boost);
+        // 垂直ハイジャンプ（最大高度は3階建て屋上約20m付近で頭打ち）
+        const baseBoost = (0.42 + Math.min(0.12, lv * 0.015)) * decay;
+        this.velocityY = Math.max(baseBoost, this.velocityY * 0.25 + baseBoost);
       }
     } else if (id === 'escudo') {
       const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).normalize();
@@ -1086,10 +1098,12 @@ export class Player {
       this.root.position.y = groundY;
       this.velocityY = 0;
       this.onGround = true;
+      this.airHopCount = 0;
     } else if (this.root.position.y <= 0) {
       this.root.position.y = 0;
       this.velocityY = 0;
       this.onGround = true;
+      this.airHopCount = 0;
     } else {
       this.onGround = false;
     }
