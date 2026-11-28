@@ -462,6 +462,13 @@ export class World {
       radius: 3.0,
       label: '[F] トリオン供給端末（全充填）'
     });
+    this.createTerminalMesh(0, 8, 0xf59e0b);
+    this.interactables.push({
+      type: 'training_terminal',
+      pos: new THREE.Vector3(0, 1.0, 8),
+      radius: 3.0,
+      label: '[F] 訓練室（マップ・対戦相手選択）'
+    });
 
     this.createPortal(0, 1.8, -14, false);
 
